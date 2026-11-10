@@ -67,6 +67,36 @@ input.txt:focus{border-color:var(--blue)}
 .optHint{font-size:12px;opacity:.7;margin:4px 2px 0;line-height:1.35}
 #scrCustom{justify-content:flex-end}
 #scrCustom .panel{max-width:400px}
+/* sala en línea */
+.share{display:flex;gap:8px;align-items:center;margin:6px 0 10px}
+.share input{flex:1;font-size:14px}
+.qrRow{display:flex;gap:12px;align-items:center;background:#f3f6ff;border-radius:16px;padding:8px;margin-bottom:10px}
+#lQr{width:120px;height:120px;flex:none;background:#fff;border-radius:10px;overflow:hidden}
+#lQr svg{width:100%;height:100%;display:block}
+.qrTip{font-size:14px;line-height:1.4}
+.tipSmall{font-size:13px;opacity:.65;text-align:center;margin:6px 0}
+.codeBig{font-size:34px;letter-spacing:6px;color:var(--blue)}
+.teams{display:flex;gap:12px}
+.tcol{flex:1;border-radius:18px;padding:10px;min-height:90px}
+.tcol.a{background:#e3f9ee}.tcol.b{background:#ffe6f1}
+.tcol h3{margin:0 0 6px;font-size:17px}
+.pl{background:#fff;border-radius:12px;padding:7px 10px;margin:5px 0;font-weight:600}
+.pl em{font-style:normal;opacity:.55;font-size:13px}
+#lStatus,#jStatus{text-align:center;margin:8px 0;min-height:22px;opacity:.8}
+#netInfo{position:absolute;top:max(18px,env(safe-area-inset-top));left:14px;background:rgba(29,35,64,.55);color:#fff;border-radius:12px;padding:4px 10px;font-size:13px;display:none}
+/* rombo de bases */
+#bd{position:fixed;left:max(10px,env(safe-area-inset-left));top:calc(max(10px,env(safe-area-inset-top)) + 70px);width:152px;height:170px;z-index:13;display:none;pointer-events:none}
+#bd.on{display:block}
+#bd small{position:absolute;left:0;right:0;top:0;text-align:center;color:#fff;font-weight:700;font-size:12px;letter-spacing:1px;text-shadow:0 2px 0 rgba(0,0,0,.4)}
+#bd button{position:absolute;width:50px;height:50px;border-radius:50%;border:3px solid rgba(255,255,255,.9);background:rgba(29,35,64,.62);color:#fff;font:700 15px Fredoka,system-ui;pointer-events:auto;cursor:pointer;box-shadow:0 4px 0 rgba(0,0,0,.2);padding:0;transition:transform .08s}
+#bd button[data-b="2"]{left:51px;top:18px}#bd button[data-b="3"]{left:2px;top:66px}#bd button[data-b="1"]{left:100px;top:66px}#bd button[data-b="4"]{left:51px;top:114px}
+#bd button.runner{background:#2fd27a}
+#bd button.can{border-color:#ffe14d;animation:pulse .7s infinite alternate}
+#bd button.sel{background:#ffc93a;color:var(--ink);border-color:#fff}
+#bd button.down{transform:scale(.9)}
+#bd.pitch button{font-size:11px}
+@keyframes pulse{to{box-shadow:0 0 0 6px rgba(255,225,77,.45),0 4px 0 rgba(0,0,0,.2)}}
+.tb.lit{outline:4px solid #fff;filter:brightness(1.15)}
 /* ayuda */
 .help h3{margin:14px 0 6px;font-size:18px}
 .help p,.help li{font-size:15px;line-height:1.45;margin:4px 0}
@@ -168,6 +198,10 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
  .cols{grid-template-columns:1fr}
  #mid{padding:5px 8px;gap:7px}
  #inn{font-size:17px;min-width:30px}
+ .teams{flex-direction:column}
+}
+@media (max-height:430px){
+ #bd{top:calc(max(6px,env(safe-area-inset-top)) + 54px);transform:scale(.82);transform-origin:0 0}
 }
 @media (max-height:430px){
  .pill{height:44px;min-width:54px;font-size:26px}
@@ -177,6 +211,7 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
 }
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 <canvas id="gl"></canvas>
@@ -205,6 +240,8 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
   <button id="pauseBtn" title="Pausa (Esc)">II</button>
 </div>
 
+<div id="bd"><small id="bdCap"></small><button data-b="2">2ª</button><button data-b="3">3ª</button><button data-b="1">1ª</button><button data-b="4">H</button></div>
+
 <div id="touchUI">
   <div id="joyZone"><div id="joy"><div id="joyKnob"></div></div></div>
   <div id="tbtns">
@@ -225,6 +262,8 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
       </div>
       <button class="btn green" data-go="scrSetup">⚾ Jugar contra la PC</button>
       <div class="mgrid">
+        <button class="btn" id="bHost">🌐 Crear sala</button>
+        <button class="btn pink" data-go="scrJoin">🔗 Unirme</button>
         <button class="btn orange" id="bDerby">💥 Derby de jonrones</button>
         <button class="btn teal" data-go="scrHelp">📘 Cómo se juega<span class="badge" id="helpBadge">¡Léeme!</span></button>
       </div>
@@ -243,6 +282,12 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
     <div class="row" data-opt="diff"><button class="chip" data-v="0">Fácil</button><button class="chip" data-v="1">Normal</button><button class="chip" data-v="2">Difícil</button></div>
     <label class="t">Estadio</label>
     <div class="row venueRow" data-opt="venue"></div>
+    <label class="t">Bateo</label>
+    <div class="row" data-opt="batMode"><button class="chip" data-v="cursor">🎯 Con cursor</button><button class="chip" data-v="simple">Simple</button></div>
+    <p class="optHint">Con cursor mueves el círculo del bate hasta donde va a pasar la pelota: arriba de la pelota sale rola, abajo sale elevado. Simple: solo cuenta el momento.</p>
+    <label class="t">Tiros en defensa</label>
+    <div class="row" data-opt="throwMode"><button class="chip" data-v="manual">✋ Manuales</button><button class="chip" data-v="auto">🤖 Automáticos</button></div>
+    <p class="optHint">Manuales: tú eliges a qué base tirar con el rombo (o 1 2 3 4), incluso antes de atrapar.</p>
     <label class="t">Ayuda al batear</label>
     <div class="row" data-opt="help"><button class="chip" data-v="1">🎯 Sí</button><button class="chip" data-v="0">Sin ayuda</button></div>
     <p class="optHint">Con ayuda ves por dónde va a pasar la pelota y un círculo que se cierra justo cuando tienes que batear.</p>
@@ -254,37 +299,37 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
 <section class="screen dim" id="scrHelp">
   <div class="panel wide help">
     <h2>📘 Cómo se juega</h2>
-    <p>Tú eres los <b style="color:#1c9554">Verdes</b> y bateas primero. Cada equipo batea hasta que le hacen <b>3 outs</b>; luego se cambian. Gana quien tenga más carreras al final de las entradas. Para que el partido no se haga eterno, una entrada se corta a las <b>6 carreras</b>.</p>
+    <p>Contra la PC eres los <b style="color:#1c9554">Verdes</b> y bateas primero. Cada equipo batea hasta que le hacen <b>3 outs</b>; luego se cambian. Gana quien tenga más carreras al final de las entradas. Una entrada se corta a las <b>6 carreras</b>. En <b>🌐 Crear sala</b> juegas contra un amigo: tú con los Verdes y él con los Rosas.</p>
     <div class="cols">
       <div class="box">
         <h3>💻 En PC</h3>
         <div class="keys">
-          <b>Ratón</b><span>Al bate: apunta a dónde mandar la pelota</span>
-          <b>Clic izq</b><span>Batear · lanzar recta · tirar a la base que apuntas</span>
-          <b>Espacio</b><span>Batazo de poder · saltar al defender · ¡correr!</span>
-          <b>E</b><span>Toque de bola · lanzar cambio · volver a la base</span>
-          <b>Clic der</b><span>Lanzar curva · lanzarte en plancha · volver</span>
+          <b>Ratón</b><span>Al bate: mueve el círculo del bate · lanzando: apunta</span>
+          <b>Clic izq</b><span>Batear · empezar y soltar el aro del lanzamiento · tirar a la base que apuntas</span>
+          <b>Espacio</b><span>Modo poder · saltar al defender · ¡corran!</span>
+          <b>E</b><span>Toque de bola · ¡vuelvan a la base!</span>
+          <b>Clic der</b><span>Cambiar lanzamiento · lanzarte en plancha</span>
+          <b>1 2 3 4</b><span>El rombo: tirar a esa base, mandar a un corredor, robar o elegir lanzamiento</span>
           <b>WASD</b><span>Mover al jugador que defiende</span>
-          <b>1 2 3 4</b><span>Tirar a 1ª, 2ª, 3ª o al home</span>
           <b>Esc · F · M</b><span>Pausa · pantalla completa · sonido</span>
         </div>
       </div>
       <div class="box">
         <h3>📱 En el móvil</h3>
         <ul>
-          <li><b>Joystick</b> (izquierda): apuntar el batazo, mover el lanzamiento o correr a la pelota.</li>
-          <li><b>Botones</b> (derecha): cambian según la jugada — BATEAR / PODER / TOQUE, RECTA / CURVA / CAMBIO, LANZAR / SALTO / PLANCHA, CORRER / VOLVER.</li>
-          <li>Para tirar a una base, inclina el joystick hacia esa base y toca LANZAR. Sin inclinar, tira a la mejor base.</li>
+          <li><b>Joystick</b> (izquierda): mover el círculo del bate, apuntar el lanzamiento o correr a la pelota.</li>
+          <li><b>Botones</b> (derecha): BATEAR / PODER / TOQUE · RECTA / CURVA / SLIDER / CAMBIO · LANZAR / SALTO / PLANCHA · CORRER / VOLVER.</li>
+          <li><b>Rombo de bases</b> (arriba a la izquierda): toca una base para tirar ahí, para mandar o regresar a un corredor, o para robar antes del lanzamiento.</li>
           <li>Gira el teléfono en horizontal y usa ⛶ para pantalla completa.</li>
         </ul>
       </div>
     </div>
     <h3>⚾ Al bate</h3>
-    <p>Batea justo cuando la pelota llega al home. Antes de tiempo la mandas hacia la izquierda; tarde, hacia la derecha. El <b>batazo de poder</b> pega más fuerte pero es más difícil de conectar. Si la pelota va fuera de la zona y no le tiras, es <b>bola</b>: 4 bolas y caminas a primera. 3 strikes y es ponche.</p>
-    <h3>🏃 Corriendo</h3>
-    <p>Tus corredores corren solos lo que es seguro. Con <b>CORRER</b> los mandas a la siguiente base y con <b>VOLVER</b> los regresas. Si te atrapan la pelota en el aire, es out y los corredores tienen que volver a su base.</p>
+    <p>Mueve el <b>círculo del bate</b> hasta donde va a pasar la pelota y batea justo cuando llega. Si la pelota pasa por la parte de arriba del círculo sale elevada; por abajo, rola. Antes de tiempo la mandas a la izquierda; tarde, a la derecha. <b>PODER</b> achica el círculo y pega mucho más fuerte. Si va fuera de la zona y no le tiras, es <b>bola</b>: 4 bolas y caminas; 3 strikes y es ponche. (En opciones puedes cambiar a bateo <b>simple</b>: solo cuenta el momento.)</p>
+    <h3>🏃 Corriendo y robando</h3>
+    <p>Tus corredores corren solos lo que es seguro. <b>CORRER</b> / <b>VOLVER</b> mueven a todos; tocando una base del rombo mandas o regresas a uno solo. Antes del lanzamiento, toca la base siguiente a un corredor para <b>robarla</b>: sale con el movimiento del lanzador.</p>
     <h3>🧤 Lanzando y defendiendo</h3>
-    <p>Apunta dentro (o fuera, para engañar) de la zona de strike y elige <b>recta</b> (rápida), <b>curva</b> (se mueve) o <b>cambio</b> (lenta, engaña al bateador). Cuando le pegan, controlas al jugador más cerca de la pelota; si no lo mueves, corre solo. Atrapa y tira a la base antes de que llegue el corredor.</p>
+    <p>Apunta en la zona (o fuera, para engañar), elige <b>recta</b> (rápida), <b>curva</b> (cae mucho), <b>slider</b> (se va de lado) o <b>cambio</b> (lenta) y suelta cuando el <b>aro</b> se cierre en el círculo verde: cuanto más justo, más preciso y rápido. Cuando le pegan, controlas al jugador más cerca de la pelota; si no lo mueves, corre solo. Toca una base del rombo para tirar ahí, incluso antes de atrapar.</p>
     <button class="btn green" data-go="scrMenu">¡Entendido!</button>
   </div>
 </section>
@@ -299,12 +344,49 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
   </div>
 </section>
 
+<section class="screen dim" id="scrJoin">
+  <div class="panel">
+    <h2>Unirme a una sala</h2>
+    <label class="t">Código de la sala</label>
+    <input class="txt" id="jCode" maxlength="6" placeholder="ABCDE" autocomplete="off" style="text-transform:uppercase;letter-spacing:6px;text-align:center;font-size:28px">
+    <div id="jStatus"></div>
+    <p class="tipSmall">Abre el link en Chrome o Safari (no dentro de WhatsApp o Instagram). No hace falta estar en la misma red.</p>
+    <button class="btn green" id="bJoin">Entrar</button>
+    <button class="btn gray" data-go="scrMenu">Volver</button>
+  </div>
+</section>
+
+<section class="screen dim" id="scrLobby">
+  <div class="panel wide">
+    <h2>Sala <span class="codeBig" id="lCode">-----</span></h2>
+    <div class="share"><input class="txt" id="lLink" readonly><button class="btn small" id="bCopy">Copiar link</button></div>
+    <div class="qrRow" id="qrRow"><div id="lQr"></div><div class="qrTip">📱 <b>Escanea este código con la cámara del teléfono</b> para entrar a la sala. Funciona con WiFi o con datos. Deja esta pestaña abierta mientras juegan.</div></div>
+    <div class="teams">
+      <div class="tcol a"><h3>🟢 Verdes · anfitrión</h3><div id="lTeam0"></div></div>
+      <div class="tcol b"><h3>🩷 Rosas · invitado</h3><div id="lTeam1"></div></div>
+    </div>
+    <div id="lHostOpts">
+      <label class="t">Entradas</label>
+      <div class="row" data-lopt="innings"><button class="chip" data-v="1">1</button><button class="chip" data-v="2">2</button><button class="chip" data-v="3">3</button><button class="chip" data-v="5">5</button></div>
+      <label class="t">Dificultad de la PC (si nadie entra)</label>
+      <div class="row" data-lopt="diff"><button class="chip" data-v="0">Fácil</button><button class="chip" data-v="1">Normal</button><button class="chip" data-v="2">Difícil</button></div>
+      <label class="t">Estadio</label>
+      <div class="row venueRow" data-lopt="venue"></div>
+    </div>
+    <div id="lStatus"></div>
+    <button class="btn green" id="bStart">Empezar partido</button>
+    <button class="btn gray" id="bLeave">Salir de la sala</button>
+  </div>
+</section>
+
 <section class="screen dim" id="scrPause">
   <div class="panel">
     <h2>Pausa</h2>
     <button class="btn green" id="bResume">Continuar</button>
     <button class="btn" id="bTags">🏷️ Nombres: Auto</button>
     <button class="btn" id="bQuality">⚙️ Calidad: Automática</button>
+    <button class="btn" id="bBatMode">⚾ Bateo: Con cursor</button>
+    <button class="btn" id="bThrowMode">🧤 Tiros en defensa: Manuales</button>
     <button class="btn" id="bHelpTog">🎯 Ayuda al batear: Sí</button>
     <button class="btn" id="bVib">📳 Vibración: Sí</button>
     <button class="btn gray" id="bQuit">Salir al menú</button>
@@ -324,6 +406,7 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
     </div>
     <div id="eUnlocks"></div>
     <button class="btn green" id="bAgain">¡Revancha!</button>
+    <button class="btn" id="bToLobby" style="display:none">Volver a la sala</button>
     <button class="btn gray" id="bEndMenu">Menú</button>
   </div>
 </section>

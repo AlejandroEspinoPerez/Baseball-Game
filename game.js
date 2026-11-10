@@ -97,7 +97,7 @@ function defaultSave() {
   return {
     name: 'Jugador' + randi(10, 99),
     look: { skin: '#f3c48e', hair: 'spiky', hairColor: '#2b1d14', acc: 'none', bat: '#c8955a', glove: '#8a5a36', cel: 'punos' },
-    xp: 0, level: 1, wins: 0, games: 0, streak: 0, best: 0, innings: 3, diff: 1, venue: 'parque', help: 1,
+    xp: 0, level: 1, wins: 0, games: 0, streak: 0, best: 0, innings: 3, diff: 1, venue: 'parque', help: 1, batMode: 'cursor', throwMode: 'manual',
     muted: false, derbyBest: 0, derbyLong: 0, hrTotal: 0, quality: 'auto', tags: 'auto', vib: true, seenHelp: false,
   };
 }
@@ -849,6 +849,20 @@ const pitchMark = ringMarker(0.075, 0.11, 0xffe14d);
 const pitchDot = ringMarker(0, 0.03, 0xffe14d);
 const crossMark = ringMarker(0.09, 0.125, 0xffffff);
 const timingRing = ringMarker(0.13, 0.16, 0xffe14d, 0.9);
+// círculo del bate (bateo con cursor) y aro de precisión del lanzamiento: anillos de radio 1 que se escalan
+const batCursor = new THREE.Group();
+{
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffe14d, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 48), mat);
+  const fill = new THREE.Mesh(new THREE.CircleGeometry(0.86, 40), new THREE.MeshBasicMaterial({ color: 0xffe14d, transparent: true, opacity: 0.16, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+  const h = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.06), mat), v = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 0.5), mat);
+  for (const m of [ring, fill, h, v]) { m.renderOrder = 6; batCursor.add(m); }
+  batCursor.userData = { mat, fill: fill.material };
+  batCursor.visible = false;
+  scene.add(batCursor);
+}
+const meterRing = ringMarker(0.9, 1, 0xffe14d, 0.95);
+const meterGoal = ringMarker(0.085, 0.115, 0x7dffb0, 0.9);
 const baseRings = [null];
 for (let b = 1; b <= 4; b++) {
   const m = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.25, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, depthWrite: false }));
@@ -1592,17 +1606,22 @@ function worldToScreen(x, y, z) {
 // =========================================================
 //  SIMULACIÓN DEL PARTIDO
 // =========================================================
-const S = { on: false, events: [], cmds: [], runners: [], teams: [[], []], players: [], clock: 0, inp: { mx: 0, mz: 0 } };
-const HUMAN_D = { fieldV: 1, react: 0.28, throwV: 1 }; // tus defensores (los mueve la PC si no los tocas)
+const S = { on: false, events: [], cmds: [], runners: [], teams: [[], []], players: [], clock: 0, inp: [{ mx: 0, mz: 0 }, { mx: 0, mz: 0 }], ctl: [false, false], remote: [false, false], me: -1, throwMode: ['auto', 'auto'] };
+const HUMAN_D = { fieldV: 1, react: 0.28, throwV: 1 }; // defensores de una persona (los mueve la PC si no los toca)
 function emit(type, d) { S.events.push(Object.assign({ type }, d || {})); }
 const batTeam = () => S.half;
 const fieldTeam = () => 1 - S.half;
 const fielders = () => S.teams[1 - S.half];
 const byRole = (role) => S.teams[1 - S.half].find((p) => p.role === role);
 const byId = (id) => S.players[id];
-const humanBats = () => S.human >= 0 && S.human === S.half;
-const humanFields = () => S.human >= 0 && S.human === 1 - S.half && !S.derby;
-const fD = () => (S.human >= 0 && fieldTeam() === S.human ? HUMAN_D : S.D);
+// quién controla cada equipo (simulación): una persona (en este dispositivo o en línea) o la PC
+const tH = (t) => !!S.ctl[t];
+const batH = () => tH(S.half);
+const fldH = () => tH(1 - S.half) && !S.derby;
+// el jugador de ESTE dispositivo (interfaz)
+const humanBats = () => S.me >= 0 && S.me === S.half;
+const humanFields = () => S.me >= 0 && S.me === 1 - S.half && !S.derby;
+const fD = () => (fldH() ? HUMAN_D : S.D);
 const live = (r) => !r.out && !r.scored;
 const onBase = (r) => Math.abs(r.p - Math.round(r.p)) < 1e-4;
 const standing = (r) => Math.abs(r.p - r.target) < 1e-6 && onBase(r);
@@ -1629,28 +1648,36 @@ function makePlayer(id, team, name, look, cpu, role) {
   };
 }
 function makeRunner(pl, base, isBatter) {
-  const cpuK = pl.cpu && S.human >= 0 && pl.team !== S.human ? [0.93, 1, 1.04][S.settings.diff] || 1 : 1;
-  return { pl, p: base, base, base0: base, target: base, forced: -1, fdone: true, isBatter: !!isBatter, out: false, scored: false, manual: false, stay: false, startT: 0, decideAt: 0, speed: RUN_V * pl.spd * cpuK, slideT: 0, scoreT: 0 };
+  const cpuK = !tH(pl.team) && S.ctl.some(Boolean) ? [0.93, 1, 1.04][S.settings.diff] || 1 : 1;
+  return { pl, p: base, base, base0: base, target: base, forced: -1, fdone: true, isBatter: !!isBatter, out: false, scored: false, manual: false, stay: false, startT: 0, decideAt: 0, speed: RUN_V * pl.spd * cpuK, slideT: 0, scoreT: 0, steal: false };
 }
+// opts: { settings, demo, derby, online, ctl: [bool, bool], remote: [bool, bool], me, captains: [{name, look} | null, …], throwMode: [..] }
 function newGame(opts) {
   const set = opts.settings;
+  const ctl = opts.ctl || (opts.demo ? [false, false] : [true, false]);
   Object.assign(S, {
-    on: true, demo: !!opts.demo, derby: !!opts.derby, human: opts.demo ? -1 : 0, settings: set, D: DIFF[set.diff] || DIFF[1],
+    on: true, demo: !!opts.demo, derby: !!opts.derby, online: !!opts.online, net: opts.net || '', settings: set, D: DIFF[set.diff] || DIFF[1],
+    ctl, remote: opts.remote || [false, false], me: opts.me ?? (opts.demo ? -1 : 0), throwMode: opts.throwMode || [SAVE.throwMode || 'manual', 'auto'],
     innings: set.innings, score: [0, 0], line: [[], []], hits: [0, 0], inning: 1, half: 0,
     outs: 0, balls: 0, strikes: 0, batIdx: [0, 0], runners: [], events: [], cmds: [], clock: 0,
     phase: 'none', t: 0, ended: false, derbyHr: 0, derbyOuts: 0, derbyLong: 0, derbyMax: 10, derbyN: 0,
     swing: null, pitch: null, batted: false, chase: null, ctrlId: -1, hr: false, walk: false, playRuns: [], cov: {}, humanActT: 0,
+    inp: [{ mx: 0, mz: 0 }, { mx: 0, mz: 0 }], queued: null, stealPlay: false,
   });
   S.teams = [[], []]; S.players = [];
-  const used = new Set([SAVE.name]);
+  const caps = opts.captains || [opts.demo ? null : { name: SAVE.name, look: SAVE.look }, null];
+  const used = new Set(caps.filter(Boolean).map((c) => c.name));
+  const R = Array.isArray(opts.roster) ? opts.roster : null; // alineación que manda el anfitrión (invitado)
   let id = 0;
   for (let team = 0; team < 2; team++) for (let i = 0; i < 9; i++) {
-    const human = team === 0 && i === 0 && !S.demo;
-    const p = makePlayer(id++, team, human ? SAVE.name : cpuName(used), human ? SAVE.look : randomLook(), !human, ROLES[i]);
+    const rr = R ? R[id] || {} : null;
+    const cap = rr ? (rr.c ? { name: String(rr.n || 'Amigo').slice(0, 12), look: sanitizeLook(rr.l) } : null) : i === 0 ? caps[team] : null;
+    const p = makePlayer(id++, team, rr ? String(rr.n || 'Jugador').slice(0, 14) : cap ? cap.name : cpuName(used), rr ? sanitizeLook(rr.l) : cap ? cap.look : randomLook(), !cap, ROLES[i]);
     p.order = i;
-    if (human) { p.pow = 1.04; p.spd = 1.04; p.arm = 1.05; }
+    if (cap) { p.pow = 1.04; p.spd = 1.04; p.arm = 1.05; p.captain = true; }
     S.teams[team].push(p); S.players.push(p);
   }
+  S.avatarId = S.me >= 0 ? S.teams[S.me][0].id : -1;
   S.ball = { x: 0, y: 1, z: 0, vx: 0, vy: 0, vz: 0, st: 'held', holder: null, bounced: false, wall: false, batted: false, thrown: false, noCatchT: 0, noCatchT2: 0, outOfPark: false, fromId: -1, tgtBase: -1, b0x: 0, b0z: 0, side: false };
   enterPhase('pre');
 }
@@ -1692,8 +1719,8 @@ function ballToPitcher() {
   Object.assign(b, { st: 'held', holder: byRole('P'), vx: 0, vy: 0, vz: 0, outOfPark: false, bounced: false, wall: false, batted: false, thrown: false, side: false });
 }
 function onPitch() {
-  Object.assign(S, { pitch: null, swing: null, contactDone: false, judged: false, cpuSwingAt: 0, batted: false, hr: false, walk: false, pend: null, flyOut: false, fair: null, chase: null, ctrlId: -1, flyCatchable: false });
-  S.cpuPitchAt = S.clock + (S.demo ? rand(0.6, 1.0) : S.derby ? rand(0.8, 1.2) : humanBats() ? rand(0.9, 1.5) : rand(1.0, 1.8));
+  Object.assign(S, { pitch: null, swing: null, contactDone: false, judged: false, cpuSwingAt: 0, batted: false, hr: false, walk: false, pend: null, flyOut: false, fair: null, chase: null, ctrlId: -1, flyCatchable: false, taken: false, waitT: 0, stealPlay: false, queued: null, playRuns: [] });
+  S.cpuPitchAt = S.clock + (S.demo ? rand(0.6, 1.0) : S.derby ? rand(0.8, 1.2) : batH() ? rand(0.9, 1.5) : rand(1.0, 1.8));
   for (const f of fielders()) {
     if (f.role === 'C') { f.x = POS.C[0]; f.z = POS.C[1]; f.ry = Math.PI; f.anim = 'squat'; f.animT = 0; }
     else if (f.role === 'P') { f.x = POS.P[0]; f.z = POS.P[1]; f.ry = 0; f.anim = 'idle'; }
@@ -1705,25 +1732,58 @@ function onPitch() {
 }
 
 // ---------- lanzamiento ----------
+// velocidad (m/s) y efecto (aceleración lateral y caída) de cada lanzamiento
+const PITCHES = {
+  recta: { name: 'Recta', v: 16, ax: 0, ay: -4.5 },
+  curva: { name: 'Curva', v: 13, ax: 5.5, ay: -12 },
+  slider: { name: 'Slider', v: 14.5, ax: 11, ay: -5 },
+  cambio: { name: 'Cambio', v: 11, ax: -1.5, ay: -6 },
+};
+const PITCH_KEYS = Object.keys(PITCHES);
 function cpuPitch() {
   let kind;
   const r = Math.random();
   if (S.derby) kind = r < 0.85 ? 'recta' : 'cambio';
-  else if (S.settings.diff === 0) kind = r < 0.7 ? 'recta' : r < 0.85 ? 'curva' : 'cambio';
-  else kind = r < 0.5 ? 'recta' : r < 0.78 ? 'curva' : 'cambio';
+  else if (S.settings.diff === 0) kind = r < 0.65 ? 'recta' : r < 0.8 ? 'curva' : r < 0.9 ? 'slider' : 'cambio';
+  else kind = r < 0.42 ? 'recta' : r < 0.62 ? 'curva' : r < 0.8 ? 'slider' : 'cambio';
   const wantStrike = S.derby ? Math.random() < 0.9 : Math.random() < (S.balls === 3 ? 0.85 : S.strikes === 2 ? 0.48 : 0.64);
   let tx, ty;
   if (wantStrike) { tx = rand(-0.27, 0.27); ty = rand(0.5, 1.0); if (S.derby) { tx *= 0.6; ty = rand(0.6, 0.92); } }
   else if (Math.random() < 0.6) { tx = pick([-1, 1]) * rand(0.45, 0.72); ty = rand(0.35, 1.2); }
   else { tx = rand(-0.3, 0.3); ty = Math.random() < 0.5 ? rand(0.12, 0.3) : rand(1.22, 1.45); }
-  return { kind, tx: tx + randn() * 0.04, ty: ty + randn() * 0.04 };
+  const accR = S.derby ? [0.85, 1] : [[0.4, 0.85], [0.55, 0.95], [0.7, 1]][S.settings.diff] || [0.55, 0.95];
+  return { kind, tx, ty, acc: rand(accR[0], accR[1]) };
 }
+function cpuStealDecide() {
+  if (S.derby || S.outs >= 2 || S.strikes >= 2) return;
+  const r1 = occAt(1), r2 = occAt(2), r3 = occAt(3);
+  const pr = S.demo ? 0.06 : [0.04, 0.07, 0.1][S.settings.diff] || 0.07;
+  if (r1 && !r2 && Math.random() < pr) r1.steal = true;
+  else if (r2 && !r3 && !r1 && Math.random() < pr * 0.5) r2.steal = true;
+}
+// la precisión (0-1) decide cuánto se desvía de la mira y un poco de velocidad
 function startWindup(p) {
+  const acc = clamp(Number.isFinite(p.acc) ? p.acc : 0.8, 0, 1);
+  const sc = (1 - acc) * 0.34, a = rand(0, Math.PI * 2);
+  p.tx = clamp(p.tx + Math.cos(a) * sc, -1.1, 1.1); p.ty = clamp(p.ty + Math.sin(a) * sc, 0.05, 1.8);
+  p.sf = 0.95 + 0.07 * acc + (acc > 0.85 ? 0.03 : 0);
+  p.acc = acc;
+  if (!PITCHES[p.kind]) p.kind = 'recta';
   S.pitch = p;
   const P = byRole('P');
   P.anim = 'pitch'; P.animT = 0; P.x = POS.P[0]; P.z = POS.P[1]; P.ry = 0;
   enterPhase('windup');
-  emit('windup');
+  emit('windup', { acc, kind: p.kind, team: P.team });
+  // robos de base: el corredor sale con el movimiento del lanzador
+  if (!batH()) cpuStealDecide();
+  let st = 0;
+  for (const r of S.runners) {
+    if (!live(r) || !r.steal || !standing(r) || r.p >= 4) { r.steal = false; continue; }
+    const k = Math.round(r.p);
+    Object.assign(r, { target: k + 1, base0: k, manual: true, stealing: true, steal: false, startT: S.clock + 0.25 });
+    st++;
+  }
+  if (st) emit('steal', { team: batTeam() });
 }
 function pitchAt(p, t, out = {}) {
   out.x = p.p0.x + p.v0.x * t + 0.5 * p.a.x * t * t;
@@ -1732,23 +1792,24 @@ function pitchAt(p, t, out = {}) {
   return out;
 }
 function releasePitch() {
-  const p = S.pitch, b = S.ball;
-  const base = p.kind === 'recta' ? 16 : p.kind === 'curva' ? 13 : 11;
-  const v = base * (humanFields() ? 1 : S.demo ? 0.92 : S.D.pitchV) * (S.derby ? 0.88 : 1);
+  const p = S.pitch, b = S.ball, PT = PITCHES[p.kind];
+  const v = PT.v * (p.sf || 1) * (fldH() ? 1 : S.demo ? 0.92 : S.D.pitchV) * (S.derby ? 0.88 : 1);
   const p0 = { x: PITCH_REL.x, y: PITCH_REL.y, z: PITCH_REL.z };
   const T0 = (0 - p0.z) / v;
-  const a = { x: p.kind === 'curva' ? 9 : p.kind === 'cambio' ? -1.5 : 0, y: -(p.kind === 'curva' ? 9 : p.kind === 'cambio' ? 6 : 4.5) };
+  const a = { x: PT.ax, y: PT.ay };
   p.p0 = p0; p.a = a; p.v = v;
   p.v0 = { x: (p.tx - p0.x - 0.5 * a.x * T0 * T0) / T0, y: (p.ty - p0.y - 0.5 * a.y * T0 * T0) / T0, z: v };
-  p.t0 = S.clock; p.T0 = T0;
+  p.t0 = S.clock; p.T0 = T0; p.tt = 0;
+  p.id = (S.pitchN = (S.pitchN || 0) + 1);
   p.tC = (CONTACT_Z - p0.z) / v;
   p.cross = pitchAt(p, T0); p.crossC = pitchAt(p, p.tC);
   p.strike = Math.abs(p.cross.x) <= ZONE.x + BALL_R && p.cross.y >= ZONE.y0 - BALL_R && p.cross.y <= ZONE.y1 + BALL_R;
   p.tContactAbs = S.clock + p.tC;
   Object.assign(b, { st: 'pitch', holder: null, x: p0.x, y: p0.y, z: p0.z, vx: p.v0.x, vy: p.v0.y, vz: v, batted: false, thrown: false });
-  if (!humanBats()) cpuBatDecide();
+  if (!batH()) cpuBatDecide();
   emit('pitch', { kind: p.kind });
   enterPhase('flight');
+  if (S.net === 'host') netPitchRelease(p);
 }
 function cpuBatDecide() {
   const D = S.demo ? DIFF[1] : S.D, p = S.pitch;
@@ -1765,6 +1826,7 @@ function cpuBatDecide() {
   let err = randn() * 3 * D.cpuSig; // randn() tiene desviación 1/3
   if (p.kind === 'cambio' && Math.random() < 0.55) err -= rand(0.04, 0.09);
   if (p.kind === 'curva') err += randn() * 0.06;
+  if (p.kind === 'slider' && !inZ && Math.random() < 0.4) err += randn() * 0.12; // se tira a la que se escapa
   S.cpuSwingAt = kind === 'bunt' ? S.clock + p.tC - rand(0.3, 0.55) : S.clock + p.tC - SWING_DT + err;
   S.cpuSwingKind = kind;
   S.cpuAim = rand(-0.55, 0.55);
@@ -1782,7 +1844,7 @@ function evalContact(kind, err, cross, aim, pl, winScale) {
     return { hit: true, foulTip: true, v: rand(13, 21), la: rand(18, 62) * DEG, phi: side * rand(0.95, 2.2), grade: 'foul', q: 0.1 };
   }
   const q = qt * (0.55 + 0.45 * clamp(ql * 1.4, 0, 1));
-  const pow = pl.pow * (pl.cpu && S.human >= 0 && pl.team !== S.human ? S.D.cpuPow : 1);
+  const pow = pl.pow * (!tH(pl.team) && S.ctl.some(Boolean) ? S.D.cpuPow : 1);
   const v = (kind === 'power' ? 13 + 23 * q : 11.5 + 20 * q) * pow;
   let la;
   if (q < 0.33) la = Math.random() < 0.6 ? rand(-20, -3) : rand(46, 66);
@@ -1792,28 +1854,77 @@ function evalContact(kind, err, cross, aim, pl, winScale) {
   const phi = aim * (0.35 + 0.65 * qt) + (err / W) * 0.55 + randn() * 0.05 * (1.3 - q);
   return { hit: true, v, la: la * DEG, phi, grade: perfect ? 'perfect' : q > 0.45 ? 'good' : 'weak', q };
 }
-function startSwing(kind, aim) {
+// bateo con cursor: el círculo del bate tiene que estar donde pasa la pelota.
+// Pelota por encima del centro del cursor → elevado; por debajo → rola. Adelantado → hacia la izquierda.
+const CURSOR_R = { normal: 0.2, power: 0.135, bunt: 0.26 };
+function evalCursor(kind, err, cross, cur, pl, winScale) {
+  const R = (CURSOR_R[kind] || 0.2) + BALL_R;
+  const W = (kind === 'power' ? 0.085 : kind === 'bunt' ? 0.14 : 0.11) * winScale;
+  const cx = clamp(Number.isFinite(+cur.x) ? +cur.x : 0, -1, 1), cy = clamp(Number.isFinite(+cur.y) ? +cur.y : 0.75, 0, 2);
+  const dx = cross.x - cx, dy = cross.y - cy, d = Math.hypot(dx, dy);
+  const qt = 1 - Math.abs(err) / W;
+  if (qt <= 0 || d > R + 0.05) return { hit: false, err, early: err < 0, far: d > R + 0.05 && qt > 0 };
+  if (kind === 'bunt') return { hit: true, v: 4.5 + 4 * qt * (1 - d / (R + 0.05)), la: rand(-16, -5) * DEG, phi: clamp((err / W) * 0.6, -0.6, 0.6) + rand(-0.1, 0.1), grade: qt > 0.5 && d < R * 0.6 ? 'good' : 'weak', q: 0.3 };
+  if (d > R || qt < 0.15) {
+    const side = err < 0 ? -1 : 1;
+    return { hit: true, foulTip: true, v: rand(12, 20), la: rand(15, 65) * DEG, phi: side * rand(0.9, 2.3), grade: 'foul', q: 0.1 };
+  }
+  const ql = 1 - d / R, u = clamp(dy / R, -1, 1);
+  const q = qt * (0.45 + 0.55 * ql);
+  const v = (kind === 'power' ? 13 + 24 * q : 11.5 + 20.5 * q) * pl.pow;
+  let la = 13 + u * 38 + (kind === 'power' ? 7 : 0) + randn() * 4;
+  const perfect = qt > 0.72 && ql > 0.55;
+  if (perfect) la = kind === 'power' ? clamp(la, 18, 32) : clamp(la, 6, 24);
+  const phi = (err / W) * 0.9 + randn() * 0.05 * (1.3 - q);
+  return { hit: true, v, la: la * DEG, phi, grade: perfect ? 'perfect' : q > 0.45 ? 'good' : 'weak', q };
+}
+// c = { aim } (bateo simple / PC) o { mode: 'cursor', cur: {x, y} }; errIn = error de tiempo ya medido (bateador en línea)
+function startSwing(kind, c, errIn) {
   if (S.swing || S.phase !== 'flight') return;
+  if (!['normal', 'power', 'bunt'].includes(kind)) kind = 'normal';
   const p = S.pitch, B = S.batter, now = S.clock;
-  let err;
-  if (kind === 'bunt') { const lead = p.tContactAbs - now; err = lead < 0.1 ? 0.1 - lead : lead > 0.8 ? -(lead - 0.8) : 0; }
-  else err = now + SWING_DT - p.tContactAbs;
-  const win = humanBats() ? S.D.win : 1;
-  const res = evalContact(kind, err, p.crossC, aim, B, win);
+  let err = errIn;
+  if (!Number.isFinite(err)) {
+    if (kind === 'bunt') { const lead = p.tContactAbs - now; err = lead < 0.1 ? 0.1 - lead : lead > 0.8 ? -(lead - 0.8) : 0; }
+    else err = now + SWING_DT - p.tContactAbs;
+  }
+  const win = batH() && !S.online ? S.D.win : 1;
+  const res = c && c.mode === 'cursor' && c.cur ? evalCursor(kind, err, p.cross, c.cur, B, win) : evalContact(kind, err, p.crossC, clamp(+(c && c.aim) || 0, -0.8, 0.8), B, win);
   S.swing = { kind, err, res, t0: now };
   B.anim = kind === 'bunt' ? 'bunt' : 'swing'; B.animT = 0;
-  if (kind !== 'bunt') emit('swing');
+  if (kind !== 'bunt') emit('swing', { far: res.far });
 }
 function stepFlight(cmds) {
   const p = S.pitch, b = S.ball;
-  const t = S.clock - p.t0;
+  const remote = S.remote[S.half];
+  for (const c of cmds) {
+    if (c.team !== S.half || !batH()) continue;
+    if (c.t === 'swing') startSwing(c.kind, c, remote ? clamp(+c.err || 0, -2, 2) : undefined);
+    else if (c.t === 'take') S.taken = true;
+    else if (c.t === 'steal') stealCmd(c.base);
+  }
+  if (S.cpuSwingAt && !S.swing && S.clock >= S.cpuSwingAt) startSwing(S.cpuSwingKind, { aim: S.cpuAim });
+  // bateador en línea: la pelota espera en el home hasta que llega su decisión (o 1,2 s)
+  const hold = remote && !S.swing && !S.taken && p.tt >= p.tC;
+  if (hold) { S.waitT += STEP; if (S.waitT > 1.2) S.taken = true; }
+  else p.tt += STEP;
+  const t = p.tt;
   pitchAt(p, t, b);
   b.vx = p.v0.x + p.a.x * t; b.vy = p.v0.y + p.a.y * t; b.vz = p.v0.z;
-  if (humanBats()) for (const c of cmds) if (c.t === 'swing') startSwing(c.kind, c.aim || 0);
-  if (S.cpuSwingAt && !S.swing && S.clock >= S.cpuSwingAt) startSwing(S.cpuSwingKind, S.cpuAim);
-  if (S.swing && S.swing.res.hit && !S.contactDone && S.clock >= p.tContactAbs) { doContact(); return; }
+  if (S.swing && S.swing.res.hit && !S.contactDone && t >= p.tC - 1e-6) { doContact(); return; }
   if (!S.judged && b.z >= 0) judgePitch();
   if (b.z >= POS.C[1] - 0.2) catcherGets();
+}
+// robar base (antes del lanzamiento): el corredor de la base anterior sale con el lanzador
+function stealCmd(base) {
+  const r = occAt(base - 1);
+  if (!r || base < 2 || base > 4 || occAt(base)) return;
+  if (S.phase === 'pitch') { r.steal = !r.steal; emit('stealArm', { base, on: r.steal }); }
+  else if ((S.phase === 'windup' || S.phase === 'flight') && !r.stealing) {
+    const k = Math.round(r.p);
+    Object.assign(r, { target: k + 1, base0: k, manual: true, stealing: true, steal: false, startT: S.clock });
+    emit('steal', { team: batTeam() });
+  }
 }
 function judgePitch() {
   S.judged = true;
@@ -1833,14 +1944,25 @@ function catcherGets() {
   emit('pop', { soft: true, x: b.x, y: b.y, z: b.z });
   const pend = S.pend;
   S.batted = false;
+  const stealing = S.runners.some((r) => live(r) && r.stealing);
   if (pend === 'k') {
     const B = S.batter; B.stats.k++; B.stats.ab++; byRole('P').stats.pk++;
     S.outs++; B.anim = 'sad'; B.animT = 0;
     emit('k', { id: B.id, team: B.team });
-    enterPhase('dead', S.outs >= 3 ? 'switch' : 'next');
+    if (S.outs < 3 && stealing) startStealPlay(true);
+    else enterPhase('dead', S.outs >= 3 ? 'switch' : 'next');
   } else if (pend === 'bb') { S.batter.stats.bb++; emit('walk', { team: S.batter.team }); startWalk(); }
   else if (pend === 'derby') enterPhase('dead', 'next');
+  else if (stealing) startStealPlay(false);
   else enterPhase('dead', 'pitch');
+}
+// robo en marcha: el receptor tiene la pelota y tira a la base
+function startStealPlay(nextBatter) {
+  Object.assign(S, { stealPlay: true, stealNext: nextBatter, playRuns: [], playOuts: 0, forceOuts: 0, endT: 0, fair: null, flyOut: false, chase: null });
+  const C = byRole('C');
+  Object.assign(C, { holdT0: S.clock, canThrowAt: S.clock + 0.2, plan: null, anim: 'idle', animT: 0 });
+  S.reactUntil = S.clock;
+  enterPhase('play');
 }
 function occAt(k) { return S.runners.find((r) => live(r) && standing(r) && Math.round(r.p) === k); }
 function startWalk() {
@@ -1864,7 +1986,7 @@ function doContact() {
     st: 'air', holder: null, batted: true, bounced: false, wall: false, thrown: false, noCatchT: 0.18, noCatchT2: 0, outOfPark: false, fromId: -1, tgtBase: -1, side: false,
   });
   Object.assign(S, { contactT: S.clock, contactDone: true, judged: true, batted: true, fair: null, hr: false, playRuns: [], playOuts: 0, forceOuts: 0, endT: 0, flyOut: false, derbyCounted: false, chase: null });
-  S.preRunners = S.runners.map((r) => ({ r, p: r.p }));
+  S.preRunners = S.runners.map((r) => ({ r, p: r.stealing ? r.base0 : r.p }));
   emit('crack', { grade: res.grade, q: res.q, kind: sw.kind, x: P.x, y: P.y, z: CONTACT_Z, v: res.v, team: B.team });
   for (const f of fielders()) if (f.anim === 'squat') { f.anim = 'idle'; f.animT = 0; }
   S.reactUntil = S.clock + (S.derby ? 0.2 : fD().react);
@@ -1873,8 +1995,9 @@ function doContact() {
   const br = makeRunner(B, 0, true);
   br.target = 1; br.forced = 1; br.fdone = false; br.startT = S.clock + (sw.kind === 'bunt' ? 0.12 : 0.32);
   let k = 1;
-  while (k <= 3 && occAt(k)) { const r = occAt(k); r.forced = k + 1; r.fdone = false; k++; }
-  for (const r of S.runners) { r.base0 = Math.round(r.p); r.manual = false; r.stay = false; }
+  const occ = (n) => S.runners.find((r) => live(r) && ((standing(r) && Math.round(r.p) === n) || (r.stealing && r.base0 === n)));
+  while (k <= 3 && occ(k)) { const r = occ(k); r.forced = k + 1; r.fdone = r.p >= k + 1 - 1e-6; k++; }
+  for (const r of S.runners) { r.base0 = r.stealing ? r.base0 : Math.round(r.p); r.manual = false; r.stay = false; r.stealing = false; }
   S.runners.push(br);
   enterPhase('play');
 }
@@ -2072,8 +2195,14 @@ function holderPlan(f) {
 }
 function holderAI(f) {
   if (f.throwT > 0) return { x: f.x, z: f.z };
-  // si estás controlando a este defensor en esta jugada, espera un momento tu tiro
-  if (f.id === S.ctrlId && humanFields() && S.humanActT > (S.contactT || 0) && S.clock - Math.max(f.holdT0, S.humanActT) < 0.9) return { x: f.x, z: f.z };
+  if (f.plan && f.plan.human) { if (S.clock >= f.canThrowAt) startThrow(f, f.plan.base); return { x: f.x, z: f.z }; }
+  // defensor de una persona: en modo manual espera su tiro (la PC solo tira si tarda mucho);
+  // en automático solo espera si esa persona lo está moviendo en esta jugada
+  if (f.id === S.ctrlId && fldH()) {
+    const since = S.clock - Math.max(f.holdT0, S.humanActT);
+    const manual = S.throwMode[f.team] === 'manual';
+    if (manual ? since < 2.6 : S.humanActT > (S.contactT || 0) && since < 0.9) return { x: f.x, z: f.z };
+  }
   if (!f.plan || S.clock >= f.replanAt) { f.plan = holderPlan(f); f.replanAt = S.clock + 0.3; }
   const P = f.plan;
   if (P.kind === 'throw') { if (S.clock >= f.canThrowAt) startThrow(f, P.base); return { x: f.x, z: f.z }; }
@@ -2152,10 +2281,17 @@ function onCatch(f) {
   if (fly && S.fair === null) S.fair = Math.abs(angOf(b.x, b.z)) <= FAIR;
   b.holder = f; b.st = 'held'; b.vx = b.vy = b.vz = 0;
   f.holdT0 = S.clock; f.plan = null;
-  f.canThrowAt = S.clock + (f.team === S.human ? 0.22 : fD().react * 0.8 + 0.08);
+  f.canThrowAt = S.clock + (tH(f.team) ? 0.22 : fD().react * 0.8 + 0.08);
   f.anim = fly || b.y > 1.2 ? 'catch' : 'field'; f.animT = 0;
   S.chase = null;
   emit('catch', { id: f.id, fly: fly && S.batted, x: b.x, y: b.y, z: b.z, team: f.team });
+  // tiro preparado: la persona eligió la base antes de atrapar
+  const Q = S.queued;
+  if (Q && Q.team === f.team && S.clock < Q.until && fldH()) {
+    S.queued = null;
+    const B = BASES[Q.base];
+    if (Math.hypot(B.x - f.x, B.z - f.z) > 1.2) { f.plan = { kind: 'throw', base: Q.base, human: true }; f.replanAt = S.clock + 9; f.canThrowAt = S.clock + 0.14; S.humanActT = S.clock; S.ctrlId = f.id; }
+  }
   if (fly && S.batted && !S.derby) {
     const br = S.runners.find((r) => r.isBatter && live(r));
     if (br) outRunner(br, 'fly');
@@ -2221,7 +2357,7 @@ function scoreRun(r) {
   if (S.half === 1 && S.inning >= S.innings && S.score[1] > S.score[0]) S.walkoff = true;
   if (S.halfRuns >= RUN_CAP) S.capHit = true;
 }
-const runMargin = (r) => (S.human < 0 ? 0.4 : r.pl.team === S.human ? 0.35 : S.D.cpuRunM);
+const runMargin = (r) => (!S.ctl.some(Boolean) ? 0.4 : tH(r.pl.team) ? 0.35 : S.D.cpuRunM);
 const blockedAt = (next, r) => S.runners.some((o) => o !== r && live(o) && ((Math.abs(o.p - next) < 1e-3 && o.target <= next + 1e-6) || (Math.abs(o.target - next) < 1e-6 && o.p < next)));
 // al llegar a una base corriendo, ¿la redondea y sigue a la siguiente?
 function tryExtend(r) {
@@ -2273,6 +2409,16 @@ function applyRunCmd(dir) {
   }
   if (any) emit('runCmd', { dir });
 }
+// tocar una base en el rombo: el corredor que salió de ella vuelve; si no, el de la base anterior corre hacia ella
+function runToBase(k) {
+  if (k < 1 || k > 4) return;
+  const rs = S.runners.filter((r) => live(r) && S.clock >= r.startT);
+  const forcedFwd = (r) => r.forced >= 0 && !r.fdone && r.forced > r.base0;
+  let r = rs.find((o) => Math.floor(o.p + 1e-6) === k && o.target > o.p + 1e-6 && !forcedFwd(o));
+  if (r) { r.target = k; r.manual = true; r.stay = true; emit('runCmd', { dir: -1, base: k }); return; }
+  r = rs.find((o) => Math.floor(o.p + 1e-6) === k - 1 && o.target <= k - 1 + 1e-6) || rs.find((o) => o.p < k && o.p > k - 1 && o.target < o.p);
+  if (r && !blockedAt(k, r)) { r.target = k; r.manual = true; r.stay = false; emit('runCmd', { dir: 1, base: k }); }
+}
 function runnersStep(dt) {
   for (const r of S.runners) {
     if (!live(r) || S.clock < r.startT) continue;
@@ -2283,7 +2429,7 @@ function runnersStep(dt) {
     else if (r.target < r.p - 1e-6) r.p = Math.max(r.target, r.p - v);
     if (r.p !== p0) touchBases(r, p0, r.p);
     if (r.p >= 4 - 1e-6 && !r.scored) { scoreRun(r); continue; }
-    if (r.manual && Math.abs(r.p - r.target) < 1e-6) r.manual = false;
+    if (r.manual && Math.abs(r.p - r.target) < 1e-6) { r.manual = false; r.stealing = false; }
     r.slideT = Math.max(0, r.slideT - dt);
     // se desliza si la jugada en la base es cerrada
     if (!S.hr && !S.walk && r.slideT <= 0 && !r.slid && Number.isInteger(r.target) && r.target > r.p && r.target >= 2) {
@@ -2297,7 +2443,8 @@ function runnersStep(dt) {
 // ---------- tu defensor ----------
 function humanFielder() {
   for (const f of fielders()) f.manual = false;
-  if (!humanFields()) { S.ctrlId = -1; return; }
+  if (!fldH()) { S.ctrlId = -1; return; }
+  const inp = S.inp[fieldTeam()];
   const b = S.ball;
   let c = null;
   if (b.holder) c = b.holder;
@@ -2305,8 +2452,8 @@ function humanFielder() {
   if (c && c.team === fieldTeam() && c.id !== S.ctrlId) { S.ctrlId = c.id; emit('ctrl', { id: c.id }); }
   const f = S.ctrlId >= 0 ? byId(S.ctrlId) : null;
   if (!f || f.team !== fieldTeam()) return;
-  const mag = Math.hypot(S.inp.mx, S.inp.mz);
-  if (mag > 0.2 && f.lieT <= 0 && f.diveT <= 0 && f.throwT <= 0 && !S.hr) { f.manual = true; f.mx = S.inp.mx; f.mz = S.inp.mz; S.humanActT = S.clock; }
+  const mag = Math.hypot(inp.mx, inp.mz);
+  if (mag > 0.2 && f.lieT <= 0 && f.diveT <= 0 && f.throwT <= 0 && !S.hr) { f.manual = true; f.mx = inp.mx / Math.max(1, mag); f.mz = inp.mz / Math.max(1, mag); S.humanActT = S.clock; }
 }
 function baseByDir(f, dir) {
   let best = 0, bd = -2;
@@ -2326,14 +2473,18 @@ function fieldCmd(c) {
     if (f.y <= 0 && f.lieT <= 0 && f.diveT <= 0 && f.throwT <= 0) { f.vy = 6.6; emit('jump'); S.humanActT = S.clock; }
   } else if (c.t === 'dive') {
     if (f.lieT > 0 || f.diveT > 0 || f.throwT > 0 || b.holder === f || f.y > 0) return;
-    let dx = S.inp.mx, dz = S.inp.mz;
+    let dx = S.inp[fieldTeam()].mx, dz = S.inp[fieldTeam()].mz;
     if (Math.hypot(dx, dz) < 0.2) { dx = b.x - f.x; dz = b.z - f.z; }
     const d = Math.hypot(dx, dz) || 1;
     Object.assign(f, { vx: (dx / d) * 8.5, vz: (dz / d) * 8.5, ry: Math.atan2(dx, dz), diveT: 0.36, anim: 'dive', animT: 0, manual: false });
     emit('dive'); S.humanActT = S.clock;
   } else if (c.t === 'throw') {
-    if (b.holder !== f || f.throwT > 0) return;
-    let base = c.base || (c.dir ? baseByDir(f, c.dir) : null);
+    const cb = clamp(c.base | 0, 0, 4);
+    // aún no la tiene: el tiro queda preparado para cuando la atrape
+    if (b.holder !== f) { if (cb && !b.holder) { S.queued = { team: f.team, base: cb, until: S.clock + 4 }; emit('queued', { base: cb, team: f.team }); } return; }
+    if (f.throwT > 0) return;
+    const dir = c.dir && Number.isFinite(+c.dir.x) && Number.isFinite(+c.dir.z) ? { x: +c.dir.x, z: +c.dir.z } : null;
+    let base = cb || (dir ? baseByDir(f, dir) : null);
     if (!base) { const P = holderPlan(f); base = P.base || 1; }
     const B = BASES[base];
     if (Math.hypot(B.x - f.x, B.z - f.z) < 1.2) return;
@@ -2398,8 +2549,11 @@ function stepPlay(dt, cmds) {
   if (S.phase !== 'play') return;
   if (b.outOfPark && !S.hr) homeRun();
   for (const c of cmds) {
-    if (c.t === 'run') { if (humanBats() && !S.hr && !S.walk) applyRunCmd(c.dir); }
-    else if (humanFields() && !S.walk) fieldCmd(c);
+    if (c.team === batTeam()) {
+      if (!batH() || S.hr || S.walk) continue;
+      if (c.t === 'run') applyRunCmd(c.dir > 0 ? 1 : -1);
+      else if (c.t === 'runTo') runToBase(c.base | 0);
+    } else if (c.team === fieldTeam() && fldH() && !S.walk) fieldCmd(c);
   }
   if (!S.walk) { fieldersAI(); humanFielder(); tryCatch(); }
   runnersStep(dt);
@@ -2418,7 +2572,7 @@ function stepPlay(dt, cmds) {
   if ((S.walkoff || S.capHit) && !S.hr) { S.endT += dt; if (S.endT > 0.9) endPlay(); return; }
   if (S.hr) { if (S.runners.every((r) => !live(r))) { S.endT += dt; if (S.endT > 1.0) endPlay(); } return; }
   if (S.walk) { if (settled) { S.endT += dt; if (S.endT > 0.3) endPlay(); } return; }
-  if (b.holder && settled && S.t > 0.8) { S.endT += dt; if (S.endT > (humanBats() ? 0.9 : 0.55)) endPlay(); }
+  if (b.holder && settled && S.t > 0.8) { S.endT += dt; if (S.endT > (batH() ? 0.9 : 0.55)) endPlay(); }
   else S.endT = 0;
   if (S.t > 30) endPlay();
 }
@@ -2436,10 +2590,12 @@ function endPlay() {
   rs.sort((a, b) => b.p - a.p);
   const used = new Set();
   rs = rs.filter((r) => { let k = r.p; while (used.has(k) && k > 1) k--; if (used.has(k)) return false; used.add(k); r.p = k; return true; });
-  for (const r of rs) Object.assign(r, { base: r.p, base0: r.p, target: r.p, forced: -1, fdone: true, isBatter: false, manual: false, stay: false, startT: 0, slideT: 0 });
+  for (const r of rs) Object.assign(r, { base: r.p, base0: r.p, target: r.p, forced: -1, fdone: true, isBatter: false, manual: false, stay: false, startT: 0, slideT: 0, stealing: false, steal: false });
   S.runners = rs;
   S.walk = false;
-  enterPhase('dead', S.walkoff || S.outs >= 3 || S.capHit ? 'switch' : 'next');
+  const steal = S.stealPlay;
+  S.stealPlay = false;
+  enterPhase('dead', S.walkoff || S.outs >= 3 || S.capHit ? 'switch' : steal && !S.stealNext ? 'pitch' : 'next');
 }
 function stepDead(dt) {
   const b = S.ball;
@@ -2495,13 +2651,19 @@ function simStep(dt) {
   const cmds = S.cmds.splice(0);
   switch (S.phase) {
     case 'pre': if (S.t > (S.demo ? 1.0 : 2.2)) enterPhase('pitch'); break;
-    case 'pitch':
-      if (humanFields()) {
-        for (const c of cmds) if (c.t === 'pitch') { startWindup({ kind: c.kind, tx: clamp(c.tx + randn() * 0.035, -0.95, 0.95), ty: clamp(c.ty + randn() * 0.035, 0.12, 1.6), human: true }); break; }
+    case 'pitch': {
+      for (const c of cmds) if (c.t === 'steal' && c.team === batTeam() && batH()) stealCmd(c.base | 0);
+      if (fldH()) {
+        for (const c of cmds) if (c.t === 'pitch' && c.team === fieldTeam()) { startWindup({ kind: String(c.kind), tx: clamp(+c.tx || 0, -0.95, 0.95), ty: clamp(+c.ty || 0.75, 0.12, 1.6), acc: clamp(+c.acc || 0, 0, 1), human: true }); break; }
       } else if (S.clock >= S.cpuPitchAt) startWindup(cpuPitch());
       break;
-    case 'windup': if (S.t >= 0.6) releasePitch(); break;
-    case 'flight': stepFlight(cmds); break;
+    }
+    case 'windup':
+      for (const c of cmds) if (c.t === 'steal' && c.team === batTeam() && batH()) stealCmd(c.base | 0);
+      if (S.runners.some((r) => r.stealing)) runnersStep(dt);
+      if (S.t >= 0.6) releasePitch();
+      break;
+    case 'flight': if (S.runners.some((r) => r.stealing)) runnersStep(dt); stepFlight(cmds); break;
     case 'play': stepPlay(dt, cmds); break;
     case 'dead': stepDead(dt); break;
     case 'switch': if (S.t > (S.demo ? 1.2 : 2.4)) nextHalf(); break;
@@ -2522,13 +2684,15 @@ function buildCharacters() {
     const c = new Char(p);
     if (p.role === 'C') c.ghostify();
     GAME.chars.set(p.id, c);
-    GAME.tags.set(p.id, makeTag(p, p.id === 0 && S.human === 0));
+    GAME.tags.set(p.id, makeTag(p, p.id === S.avatarId));
   }
 }
 
 // ---------- controles ----------
-const INPUT = { keys: {}, mouse: { nx: 0, ny: 0, has: false }, joy: { x: 0, y: 0 }, batAim: 0, ptx: 0, pty: 0.75, throwBase: 0 };
-const playing = () => (GAME.mode === 'game' || GAME.mode === 'derby') && !GAME.paused && S.on && !S.ended && !S.demo;
+const INPUT = { keys: {}, mouse: { nx: 0, ny: 0, has: false }, joy: { x: 0, y: 0 }, batAim: 0, ptx: 0, pty: 0.75, throwBase: 0, cur: { x: 0, y: 0.75 }, power: false, pitchKind: 'recta', lastBatter: null };
+const METER = { on: false, t: 0, kind: 'recta' }; // aro de precisión al lanzar
+const playing = () => (GAME.mode === 'game' || GAME.mode === 'derby' || GAME.mode === 'online') && (!GAME.paused || S.online) && S.on && !S.ended && !S.demo && GAME.screen !== 'scrPause';
+const cursorMode = () => SAVE.batMode !== 'simple';
 function uiCtx() {
   if (!playing()) return 'none';
   if (humanBats()) {
@@ -2542,7 +2706,49 @@ function uiCtx() {
   }
   return 'none';
 }
-function pushCmd(c) { if (playing()) S.cmds.push(c); }
+function pushCmd(c) {
+  if (!playing()) return;
+  c.team = S.me;
+  if (S.net === 'client') netSendCmd(c); else S.cmds.push(c);
+}
+// ¿la pelota ya salió de la mano del lanzador? (en el invitado se mira su propia copia del lanzamiento)
+const pitchLive = () => (S.net === 'client' ? !!(CL.pitch && !CL.swingSent && S.clock < CL.pitch.tContactAbs + 0.3) : S.phase === 'flight' && !S.swing);
+function swingCmd(kind) {
+  if (!pitchLive()) return;
+  const c = { t: 'swing', kind, aim: INPUT.batAim, mode: cursorMode() ? 'cursor' : 'simple', cur: { x: INPUT.cur.x, y: INPUT.cur.y } };
+  if (S.net === 'client') clientSwing(c); else pushCmd(c);
+}
+function meterStart(kind) {
+  if (METER.on) return;
+  Object.assign(METER, { on: true, t: 0, kind });
+  INPUT.pitchKind = kind;
+  SFX.ui();
+}
+// el aro se cierra: cuanto más cerca del centro al soltar, más preciso
+const meterR = () => Math.max(0.02, 0.6 * (1 - METER.t / 0.85));
+function meterRelease() {
+  if (!METER.on) return;
+  METER.on = false;
+  const acc = clamp(1 - Math.abs(meterR() - 0.1) / 0.28, 0, 1);
+  pushCmd({ t: 'pitch', kind: METER.kind, tx: INPUT.ptx, ty: INPUT.pty, acc });
+  popText(INPUT.ptx, INPUT.pty + 0.35, 0, acc > 0.85 ? '¡PERFECTO!' : acc > 0.6 ? 'BIEN' : 'IMPRECISO', acc > 0.85 ? 'perfect' : acc > 0.6 ? 'good' : 'bad');
+  if (acc > 0.85) SFX.perfect();
+}
+function meterTick(dt, ctx) {
+  if (!METER.on) return;
+  if (ctx !== 'pitch') { METER.on = false; return; }
+  METER.t += dt;
+  if (METER.t > 1.1) meterRelease();
+}
+// el rombo de bases: tirar (defensa), mandar corredores (corriendo) o robar (antes del lanzamiento)
+function baseTap(k) {
+  SFX.resume();
+  const c = uiCtx();
+  if (c === 'field') { pushCmd({ t: 'throw', base: k }); SFX.ui(); }
+  else if (c === 'run') pushCmd({ t: 'runTo', base: k });
+  else if (c === 'bat' && (S.phase === 'pitch' || S.phase === 'windup' || S.phase === 'flight')) { pushCmd({ t: 'steal', base: k }); SFX.ui(); }
+  else if (c === 'pitch' && !METER.on) { INPUT.pitchKind = PITCH_KEYS[k - 1] || 'recta'; SFX.ui(); HUD.ctx = '?'; }
+}
 function moveInput() {
   const k = INPUT.keys;
   let rx = INPUT.joy.x, ry = INPUT.joy.y;
@@ -2556,17 +2762,22 @@ function moveInput() {
 }
 function joyDir() { const m = moveInput(), l = Math.hypot(m.x, m.y); return l > 0.45 ? { x: m.x / l, z: -m.y / l } : null; }
 // botón semántico: main (clic / BATEAR), alt (Espacio / PODER), sec (E / TOQUE), dive (clic der / PLANCHA)
-function act(btn) {
+// src = 'tb' si viene de un botón táctil
+function act(btn, src) {
   SFX.resume();
   const c = uiCtx();
   if (c === 'bat') {
-    if (S.phase !== 'flight') return;
-    const kind = btn === 'main' ? 'normal' : btn === 'alt' ? 'power' : btn === 'sec' ? 'bunt' : null;
-    if (kind) pushCmd({ t: 'swing', kind, aim: INPUT.batAim });
+    if (cursorMode() && btn === 'alt') { INPUT.power = !INPUT.power; SFX.ui(); HUD.ctx = '?'; return; }
+    const kind = btn === 'main' ? (cursorMode() && INPUT.power ? 'power' : 'normal') : btn === 'alt' ? 'power' : btn === 'sec' ? 'bunt' : null;
+    if (kind) swingCmd(kind);
   } else if (c === 'run') {
     pushCmd({ t: 'run', dir: btn === 'main' || btn === 'alt' ? 1 : -1 });
   } else if (c === 'pitch') {
-    pushCmd({ t: 'pitch', kind: btn === 'main' ? 'recta' : btn === 'sec' ? 'cambio' : 'curva', tx: INPUT.ptx, ty: INPUT.pty });
+    if (src === 'tb') {
+      // cada botón es un lanzamiento: tocar = empieza el aro; tocar otra vez = suelta
+      if (METER.on) meterRelease(); else meterStart({ main: 'recta', alt: 'curva', sec: 'slider', dive: 'cambio' }[btn] || 'recta');
+    } else if (btn === 'main' || btn === 'alt') { if (METER.on) meterRelease(); else meterStart(INPUT.pitchKind); }
+    else if (!METER.on) { INPUT.pitchKind = PITCH_KEYS[(PITCH_KEYS.indexOf(INPUT.pitchKind) + 1) % PITCH_KEYS.length]; SFX.ui(); HUD.ctx = '?'; }
   } else if (c === 'field') {
     if (btn === 'main') pushCmd({ t: 'throw', base: INPUT.mouse.has && !IS_TOUCH ? INPUT.throwBase : 0, dir: joyDir() });
     else if (btn === 'alt') pushCmd({ t: 'jump' });
@@ -2586,7 +2797,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'KeyE' || e.code === 'KeyK') act('sec');
   else if (e.code === 'KeyJ' || e.code === 'Enter') act('main');
   else if (e.code === 'KeyQ' || e.code === 'KeyL' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') act('dive');
-  else if (/^(Digit|Numpad)[1-4]$/.test(e.code) && uiCtx() === 'field') pushCmd({ t: 'throw', base: +e.code.slice(-1) });
+  else if (/^(Digit|Numpad)[1-4]$/.test(e.code)) baseTap(+e.code.slice(-1));
 });
 addEventListener('keyup', (e) => { INPUT.keys[e.code] = false; });
 addEventListener('blur', () => { INPUT.keys = {}; });
@@ -2629,11 +2840,12 @@ canvas.style.cursor = 'crosshair';
   zone.addEventListener('pointercancel', end);
   const bind = (sel, k) => {
     const el = $(sel);
-    el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('down'); act(k); });
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); el.classList.add('down'); act(k, 'tb'); });
     const up = () => el.classList.remove('down');
     el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('pointerleave', up);
   };
   bind('#tbHit', 'main'); bind('#tbJump', 'alt'); bind('#tbSet', 'sec'); bind('#tbDive', 'dive');
+  for (const b of $$('#bd button')) b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); b.classList.add('down'); baseTap(+b.dataset.b); setTimeout(() => b.classList.remove('down'), 160); });
 })();
 const raycaster = new THREE.Raycaster();
 const planeG = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
@@ -2645,11 +2857,20 @@ function mouseRay(plane) {
 }
 function updateAim(dt, ctx) {
   const m = moveInput();
+  if (S.batter !== INPUT.lastBatter) { INPUT.lastBatter = S.batter; INPUT.cur.x = 0; INPUT.cur.y = 0.75; INPUT.power = false; }
   if (ctx === 'bat') {
-    const h = mouseRay(planeG);
-    if (h && h.z < -3) INPUT.batAim = clamp(angOf(h.x, h.z), -0.78, 0.78);
-    else if (!h) INPUT.batAim = damp(INPUT.batAim, m.x * 0.7, 8, dt);
+    if (cursorMode()) {
+      // el círculo del bate: ratón sobre la zona (PC) o joystick (móvil)
+      const h = CAM.mode === 'bat' ? mouseRay(planeZ) : null;
+      if (h) { INPUT.cur.x = clamp(h.x, -0.62, 0.62); INPUT.cur.y = clamp(h.y, 0.25, 1.3); }
+      else { INPUT.cur.x = clamp(INPUT.cur.x + m.x * dt * 1.7, -0.62, 0.62); INPUT.cur.y = clamp(INPUT.cur.y + m.y * dt * 1.7, 0.25, 1.3); }
+    } else {
+      const h = mouseRay(planeG);
+      if (h && h.z < -3) INPUT.batAim = clamp(angOf(h.x, h.z), -0.78, 0.78);
+      else if (!h) INPUT.batAim = damp(INPUT.batAim, m.x * 0.7, 8, dt);
+    }
   } else if (ctx === 'pitch') {
+    if (METER.on) return; // la mira queda fija mientras se cierra el aro
     const h = mouseRay(planeZ);
     if (h && CAM.mode === 'pitch') { INPUT.ptx = clamp(h.x, -0.9, 0.9); INPUT.pty = clamp(h.y, 0.15, 1.55); }
     else if (!INPUT.mouse.has || IS_TOUCH) { INPUT.ptx = clamp(INPUT.ptx + m.x * dt * 1.2, -0.9, 0.9); INPUT.pty = clamp(INPUT.pty + m.y * dt * 1.2, 0.15, 1.55); }
@@ -2667,6 +2888,7 @@ function shownThrowBase(f) {
   if (INPUT.mouse.has && !IS_TOUCH && INPUT.throwBase) return INPUT.throwBase;
   const d = joyDir();
   if (d) return baseByDir(f, d);
+  if (S.net === 'client') return 0;
   const P = holderPlan(f);
   return P.base || 1;
 }
@@ -2755,7 +2977,7 @@ function renderGame(dt) {
     const isF = p.team === fieldTeam();
     const runner = !isF && S.runners.some((r) => r.pl === p && live(r));
     c.setGear(isF ? 'field' : runner || (p.anim !== 'stance' && p.anim !== 'swing' && p.anim !== 'bunt' && S.contactDone) ? 'run' : 'bat');
-    const me = p.id === S.ctrlId;
+    const me = p.id === S.ctrlId && humanFields();
     const ctx = { ready: isF && pitching && p.role !== 'P' && p.role !== 'C' && p.anim === 'idle', me };
     let lx = b.x, ly = b.y, lz = b.z;
     if (!isF && S.batter === p && pitching) { ctx.headMax = 1.6; if (b.st === 'held') { lx = MOUND.x; ly = 1.5; lz = MOUND.z; } }
@@ -2773,7 +2995,7 @@ function renderGame(dt) {
   ballMesh.visible = !custom && !(b.outOfPark && b.st === 'dead');
   if (b.holder && GAME.chars.get(b.holder.id) && GAME.chars.get(b.holder.id).root.visible) {
     const h = b.holder;
-    const hand = (h.anim === 'throw' && h.throwT > 0) || (h.anim === 'pitch' && S.phase === 'windup' && S.t > 0.3) ? 0 : 1;
+    const hand = (h.anim === 'throw' && (h.throwT > 0 || (S.net === 'client' && h.animT < 0.22))) || (h.anim === 'pitch' && S.phase === 'windup' && S.t > 0.3) ? 0 : 1;
     GAME.chars.get(h.id).handPos(hand, _hp);
     ballMesh.position.copy(_hp);
   } else ballMesh.position.set(b.x, b.y, b.z);
@@ -2817,9 +3039,25 @@ function renderGame(dt) {
     pitchMark.position.set(INPUT.ptx, INPUT.pty, 0.02); pitchDot.position.copy(pitchMark.position);
     const inZ = Math.abs(INPUT.ptx) <= ZONE.x + BALL_R && INPUT.pty >= ZONE.y0 - BALL_R && INPUT.pty <= ZONE.y1 + BALL_R;
     pitchMark.material.color.setHex(inZ ? 0xffd23a : 0x9fe3ff); pitchDot.material.color.copy(pitchMark.material.color);
-    pitchMark.scale.setScalar(1 + Math.sin(performance.now() / 120) * 0.08);
+    pitchMark.scale.setScalar(METER.on ? 1 : 1 + Math.sin(performance.now() / 120) * 0.08);
   }
-  const help = S.settings && S.settings.help && ctxU === 'bat' && S.phase === 'flight' && S.pitch && !S.swing;
+  meterRing.visible = meterGoal.visible = ctxU === 'pitch' && METER.on;
+  if (meterRing.visible) {
+    const r = meterR();
+    meterRing.position.set(INPUT.ptx, INPUT.pty, 0.03); meterGoal.position.copy(meterRing.position);
+    meterRing.scale.setScalar(r);
+    meterRing.material.color.setHex(Math.abs(r - 0.1) < 0.045 ? 0x7dffb0 : r < 0.1 ? 0xff6b6b : 0xffe14d);
+  }
+  batCursor.visible = ctxU === 'bat' && cursorMode() && camAtPlate && !custom;
+  if (batCursor.visible) {
+    const R = CURSOR_R[INPUT.power ? 'power' : 'normal'] + BALL_R;
+    batCursor.position.set(INPUT.cur.x, INPUT.cur.y, 0.05);
+    batCursor.scale.setScalar(R);
+    const col = INPUT.power ? 0xff8a2f : 0xffe14d;
+    batCursor.userData.mat.color.setHex(col); batCursor.userData.fill.color.setHex(col);
+    batCursor.userData.mat.opacity = S.swing || (S.net === 'client' && CL.swingSent) ? 0.4 : 0.95;
+  }
+  const help = SAVE.help && ctxU === 'bat' && S.pitch && S.pitch.cross && pitchLive();
   if (help) {
     const p = S.pitch, el = (S.clock - p.t0) / p.tC;
     crossMark.visible = timingRing.visible = el > 0.3;
@@ -2831,7 +3069,7 @@ function renderGame(dt) {
     if (rem < -0.1) timingRing.visible = false;
   } else crossMark.visible = timingRing.visible = false;
   let aimOn = false, selBase = 0;
-  aimWedge.visible = ctxU === 'bat' && !custom;
+  aimWedge.visible = ctxU === 'bat' && !cursorMode() && !custom;
   if (aimWedge.visible) { aimWedge.rotation.y = -INPUT.batAim; aimWedge.material.opacity = S.phase === 'flight' ? 0.55 : 1; }
   if (ctxU === 'bat') {
     // (la flecha del suelo hace de mira)
@@ -2855,15 +3093,15 @@ function renderGame(dt) {
     let want = false;
     if (c && c.root.visible && GAME.mode !== 'menu' && !custom && S.phase !== 'end') {
       const isRunner = S.runners.some((r) => r.pl === p && live(r));
-      const key = p.id === S.ctrlId || (p === S.batter && pitching) || isRunner || (p.id === 0 && S.human === 0);
+      const key = p.id === S.ctrlId || (p === S.batter && pitching) || isRunner || p.captain;
       want = mode === 'todos' || (mode === 'auto' && key) || (mode === 'ninguno' && p.id === S.ctrlId);
     }
     if (!want) { t.style.display = 'none'; continue; }
     const s = worldToScreen(p.x, p.y + 2.05 + groundY(p.x, p.z), p.z);
     if (!s.vis) { t.style.display = 'none'; continue; }
     t.style.display = '';
-    const isMe = p.id === S.ctrlId;
-    t.classList.toggle('me', isMe || (p.id === 0 && S.human === 0));
+    const isMe = p.id === S.ctrlId && humanFields();
+    t.classList.toggle('me', isMe || p.id === S.avatarId);
     const d = camera.position.distanceTo(_tagV.set(p.x, p.y + 2, p.z));
     const sc = isMe ? 1 : clamp(18 / d, 0.62, 1);
     t.style.transform = `translate(${s.x | 0}px,${s.y | 0}px) translate(-50%,-100%) scale(${sc.toFixed(2)})`;
@@ -2881,30 +3119,65 @@ const TB = { hit: $('#tbHit'), jump: $('#tbJump'), set: $('#tbSet'), dive: $('#t
 const TB_LAYOUT = {
   bat: { hit: ['BATEAR', '#ff4f9a'], jump: ['PODER', '#ff7a2f'], set: ['TOQUE', '#ffb21e'] },
   run: { hit: ['CORRER', '#2fd27a'], set: ['VOLVER', '#8a93b5'] },
-  pitch: { hit: ['RECTA', '#3a7bff'], jump: ['CURVA', '#a24bff'], set: ['CAMBIO', '#18b6a5'] },
+  pitch: { hit: ['RECTA', '#3a7bff'], jump: ['CURVA', '#a24bff'], set: ['SLIDER', '#ff7a2f'], dive: ['CAMBIO', '#18b6a5'] },
   field: { hit: ['LANZAR', '#ff4f9a'], jump: ['SALTO', '#3a7bff'], dive: ['PLANCHA', '#8a6bff'] },
   none: {},
 };
-const CARD = {
-  bat: '<div class="ttl">Al bate</div><div><b>Ratón</b> apunta el batazo</div><div><b>Clic</b> batear</div><div><b>Espacio</b> batazo de poder</div><div><b>E</b> toque de bola</div>',
-  run: '<div class="ttl">Corriendo</div><div><b>Clic · Espacio</b> ¡corre!</div><div><b>E · Clic der</b> ¡vuelve!</div>',
-  pitch: '<div class="ttl">Lanzando</div><div><b>Ratón</b> apunta en la zona</div><div><b>Clic</b> recta (rápida)</div><div><b>Clic der</b> curva (se mueve)</div><div><b>E</b> cambio (lenta)</div>',
-  field: '<div class="ttl">Defendiendo</div><div><b>WASD</b> correr (si no, va solo)</div><div><b>Ratón</b> elige la base</div><div><b>Clic · 1-4</b> tirar a la base</div><div><b>Espacio</b> saltar · <b>Clic der</b> plancha</div>',
-};
+function cardHtml(ctx) {
+  if (ctx === 'bat') return cursorMode()
+    ? `<div class="ttl">Al bate</div><div><b>Ratón</b> mueve el círculo del bate</div><div><b>Clic</b> batear</div><div><b>Espacio</b> modo poder: ${INPUT.power ? '<span style="color:#ff7a2f">ON</span>' : 'off'}</div><div><b>E</b> toque de bola</div><div><b>2 3 4</b> robar base</div>`
+    : '<div class="ttl">Al bate</div><div><b>Ratón</b> apunta el batazo</div><div><b>Clic</b> batear</div><div><b>Espacio</b> batazo de poder</div><div><b>E</b> toque de bola</div><div><b>2 3 4</b> robar base</div>';
+  if (ctx === 'run') return '<div class="ttl">Corriendo</div><div><b>Clic · Espacio</b> todos ¡corren!</div><div><b>E · Clic der</b> todos ¡vuelven!</div><div><b>1 2 3 4</b> manda a un corredor a esa base</div>';
+  if (ctx === 'pitch') return '<div class="ttl">Lanzando</div><div><b>Ratón</b> apunta en la zona</div>' + PITCH_KEYS.map((k, i) => `<div${k === INPUT.pitchKind ? ' style="color:#2453b8;font-weight:700"' : ''}><b>${i + 1}</b> ${PITCHES[k].name}${k === INPUT.pitchKind ? ' ◀' : ''}</div>`).join('') + '<div><b>Clic</b> lanzar: suelta cuando el aro<br>se cierre en el centro verde</div>';
+  if (ctx === 'field') return '<div class="ttl">Defendiendo</div><div><b>WASD</b> correr (si no, va solo)</div><div><b>1 2 3 4</b> tirar a esa base</div><div><b>Clic</b> tirar a la base que apuntas</div><div><b>Espacio</b> saltar · <b>Clic der</b> plancha</div>';
+  return '';
+}
 function hintText(ctx) {
   if (ctx === 'bat') {
-    if (S.phase === 'flight') return '';
+    if (S.phase === 'flight' || pitchLive()) return '';
     if (S.derby) return IS_TOUCH ? 'Batea cuando llegue la pelota · PODER = más fuerte' : 'Clic = batear · Espacio = batazo de poder (¡a la calle!)';
+    if (cursorMode()) return IS_TOUCH ? 'Joystick = mueve el círculo hacia la pelota · BATEAR · PODER = círculo pequeño y fuerte' : 'Pon el círculo donde va a pasar la pelota y haz clic · Espacio = modo poder';
     return IS_TOUCH ? 'Joystick = apuntar · BATEAR cuando llegue (PODER = más fuerte)' : 'Apunta con el ratón · clic = batear · Espacio = poder · E = toque';
   }
-  if (ctx === 'run') return IS_TOUCH ? 'CORRER = avanzar · VOLVER = regresar a la base' : 'Clic / Espacio = ¡corre! · E / clic der = ¡vuelve!';
-  if (ctx === 'pitch') return IS_TOUCH ? 'Mueve el joystick para apuntar y elige RECTA, CURVA o CAMBIO' : 'Apunta con el ratón · clic = recta · clic der = curva · E = cambio';
+  if (ctx === 'run') return IS_TOUCH ? 'CORRER / VOLVER = todos · toca una base del rombo = un corredor' : 'Clic / Espacio = ¡corren! · E = ¡vuelven! · 1-4 = un corredor';
+  if (ctx === 'pitch') {
+    if (METER.on) return IS_TOUCH ? '¡Toca otra vez cuando el aro llegue al círculo verde!' : '¡Clic otra vez cuando el aro llegue al círculo verde!';
+    return IS_TOUCH ? 'Joystick = apuntar · toca un lanzamiento para empezar el aro' : `Apunta · 1-4 = lanzamiento (${PITCHES[INPUT.pitchKind].name}) · clic = empezar el aro`;
+  }
   if (ctx === 'field') {
     const f = S.ball.holder;
-    if (f && f.id === S.ctrlId) return IS_TOUCH ? 'Inclina hacia una base y toca LANZAR' : 'Apunta a una base y haz clic (o 1 2 3 4)';
-    return IS_TOUCH ? '¡A la pelota! Si no mueves el joystick, corre solo' : 'WASD = correr a la pelota (si no, corre solo) · Espacio = saltar';
+    if (f && f.id === S.ctrlId) return IS_TOUCH ? 'Toca una base del rombo para tirar' : 'Tira con 1 2 3 4 o apuntando con el ratón + clic';
+    return IS_TOUCH ? '¡A la pelota! Puedes elegir la base del rombo antes de atrapar' : 'WASD = correr (si no, va solo) · 1-4 = tiro preparado';
   }
   return '';
+}
+// rombo de bases (arriba a la izquierda): tirar, mandar corredores, robar o elegir lanzamiento
+const DMD = { el: $('#bd'), cap: $('#bdCap'), btn: {} };
+for (const b of $$('#bd button')) DMD.btn[b.dataset.b] = b;
+function updateDiamond(ctx) {
+  let mode = '';
+  const runnerOn = (k) => S.runners.some((r) => live(r) && standing(r) && Math.round(r.p) === k);
+  if (ctx === 'field') mode = 'throw';
+  else if (ctx === 'run') mode = 'run';
+  else if (ctx === 'bat' && !S.derby && (runnerOn(1) || runnerOn(2) || runnerOn(3))) mode = 'steal';
+  else if (ctx === 'pitch' && !IS_TOUCH) mode = 'pitch';
+  DMD.el.className = mode ? 'on ' + mode : '';
+  if (!mode) return;
+  DMD.cap.textContent ={ throw: 'TIRAR A…', run: 'CORREDORES', steal: 'ROBAR BASE', pitch: 'LANZAMIENTO' }[mode];
+  const sel = mode === 'throw' && S.ball.holder && S.ball.holder.id === S.ctrlId ? shownThrowBase(S.ball.holder) : mode === 'throw' && S.queued ? S.queued.base : 0;
+  for (let k = 1; k <= 4; k++) {
+    const b = DMD.btn[k];
+    let lab = k === 4 ? 'H' : k + 'ª', cls = '';
+    if (mode === 'pitch') { lab = PITCHES[PITCH_KEYS[k - 1]].name.slice(0, 6); cls = PITCH_KEYS[k - 1] === INPUT.pitchKind ? 'sel' : ''; }
+    else {
+      if (k < 4 && runnerOn(k)) cls = 'runner';
+      if (mode === 'steal') { const r = k > 1 && S.runners.find((o) => live(o) && standing(o) && Math.round(o.p) === k - 1); if (r && !runnerOn(k)) cls += r.steal || r.stealing ? ' sel' : ' can'; }
+      if (mode === 'throw' && k === sel) cls += ' sel';
+      if (mode === 'run') { const mv = S.runners.find((o) => live(o) && !standing(o) && Math.abs(o.target - k) < 1e-6); if (mv) cls += ' can'; }
+    }
+    if (b.textContent !== lab) b.textContent = lab;
+    if (b.dataset.cls !== cls) { b.dataset.cls = cls; b.className = cls; }
+  }
 }
 function updateHud(ctx) {
   if (S.score[0] !== HUD.last[0]) { HUD.pA.classList.remove('bump'); void HUD.pA.offsetWidth; HUD.pA.classList.add('bump'); }
@@ -2921,16 +3194,21 @@ function updateHud(ctx) {
   const h = hintText(ctx);
   if (HUD.hint.textContent !== h) HUD.hint.textContent = h;
   HUD.hint.classList.toggle('on', !!h);
-  if (ctx !== HUD.ctx) {
-    HUD.ctx = ctx;
+  updateDiamond(ctx);
+  const key = ctx + (ctx === 'bat' ? INPUT.power : ctx === 'pitch' ? INPUT.pitchKind + METER.on : '');
+  if (key !== HUD.ctx) {
+    HUD.ctx = key;
     const L = TB_LAYOUT[ctx] || {};
     for (const k of ['hit', 'jump', 'set', 'dive']) {
       const el = TB[k], v = L[k];
       el.classList.toggle('off', !v);
       if (v) { el.textContent = v[0]; el.style.background = v[1]; }
+      el.classList.remove('lit');
     }
+    if (ctx === 'bat' && cursorMode()) { TB.jump.textContent = INPUT.power ? 'PODER ON' : 'PODER'; TB.jump.classList.toggle('lit', INPUT.power); }
+    if (ctx === 'pitch' && METER.on) for (const k of ['hit', 'jump', 'set', 'dive']) TB[k].classList.toggle('lit', TB_LAYOUT.pitch[k][0] === PITCHES[METER.kind].name.toUpperCase());
     const card = $('#ctrlCard');
-    const html = CARD[ctx] || '';
+    const html = cardHtml(ctx);
     if (html) { card.innerHTML = html; card.style.opacity = 1; card.style.display = IS_TOUCH ? 'none' : ''; }
     else card.style.opacity = 0;
   }
@@ -2964,18 +3242,21 @@ function toast(msg, ms = 2600) {
 function handleEvent(e) {
   if (window.__JPlog) window.__JPlog.push(Object.assign({ c: +S.clock.toFixed(2), ph: S.phase }, e, e.r ? { r: undefined } : {}));
   if (S.demo) { if (e.type === 'end') setTimeout(() => { if (GAME.mode === 'menu') startDemo(); }, 600); return; }
-  const mine = (team) => team === S.human;
+  const mine = (team) => team === S.me;
   const b = S.ball;
   switch (e.type) {
     case 'half': {
       const bt = batTeam();
       if (S.derby) showBanner('¡DERBY DE JONRONES!', `${S.derbyMax} fallos y se acaba`, '#ffe14d');
-      else showBanner(`${S.half ? '▼' : '▲'} ${S.inning}ª ENTRADA`, bt === S.human ? '¡Te toca batear!' : 'Te toca lanzar y defender', TEAM_CSS[bt]);
-      if (bt === S.human) SFX.organ();
+      else showBanner(`${S.half ? '▼' : '▲'} ${S.inning}ª ENTRADA`, bt === S.me ? '¡Te toca batear!' : 'Te toca lanzar y defender', TEAM_CSS[bt]);
+      if (bt === S.me) SFX.organ();
       break;
     }
     case 'pitch': SFX.swish(0.45); break;
-    case 'swing': SFX.swish(1); break;
+    case 'swing': SFX.swish(1); if (e.far && humanBats() && S.net !== 'client') popText(INPUT.cur.x, INPUT.cur.y + 0.3, 0, '¡LEJOS!', 'bad'); break;
+    case 'steal': popText(BASES[2].x * 0.5, 2.2, BASES[2].z * 0.5, '¡ROBO!', mine(e.team) ? 'good' : 'bad'); SFX.cheer(0.4); break;
+    case 'stealArm': if (S.net !== 'client') popText(BASES[e.base].x, 2, BASES[e.base].z, e.on ? 'ROBO LISTO' : 'SIN ROBO', 'good'); break;
+    case 'queued': if (mine(e.team)) popText(BASES[e.base].x, 2, BASES[e.base].z, 'TIRO A ' + (e.base === 4 ? 'HOME' : e.base + 'ª'), 'good'); break;
     case 'crack': {
       SFX.crack(clamp(e.q, 0.2, 1));
       CHEER.t = Math.max(CHEER.t, e.q * 1.2);
@@ -3033,7 +3314,7 @@ function handleEvent(e) {
     case 'dive': SFX.dive(); break;
     case 'derbyMiss': popText(b.x, b.y + 1, b.z, `FALLO ${S.derbyOuts}/${S.derbyMax}`, 'bad'); break;
     case 'runCmd': SFX.ui(); popText(0, 2, -BD, e.dir > 0 ? '¡CORRE!' : '¡VUELVE!', 'good'); break;
-    case 'end': showEndScreen(); break;
+    case 'end': if (S.net === 'client') break; if (S.net === 'host') netSendEnd(); showEndScreen(); break;
   }
 }
 
@@ -3070,18 +3351,23 @@ function toggleMute() {
   toast(SFX.muted ? 'Sonido apagado' : 'Sonido encendido', 1200);
 }
 function togglePause() {
-  if (GAME.mode === 'menu') { if (GAME.screen !== 'scrMenu') showScreen('scrMenu'); return; }
+  if (GAME.mode === 'menu') { if (!['scrMenu', 'scrLobby'].includes(GAME.screen)) showScreen(NET.role === 'off' ? 'scrMenu' : 'scrLobby'); return; }
   if (GAME.screen === 'scrEnd') return;
   GAME.paused = !GAME.paused;
   syncPauseBtns();
+  $('#bResume').textContent = S.online ? 'Volver al partido (sigue en línea)' : 'Continuar';
   showScreen(GAME.paused ? 'scrPause' : null);
 }
-function startGame(derby) {
-  GAME.mode = derby ? 'derby' : 'game';
+// opts (en línea): { net, me, ctl, remote, captains, roster, throwMode, settings }
+function startGame(derby, opts) {
+  GAME.mode = opts ? 'online' : derby ? 'derby' : 'game';
   GAME.paused = false;
-  setVenue(SAVE.venue);
-  newGame({ settings: { innings: SAVE.innings, diff: SAVE.diff, venue: SAVE.venue, help: !!SAVE.help }, derby });
+  const settings = opts ? opts.settings : { innings: SAVE.innings, diff: SAVE.diff, venue: SAVE.venue, help: !!SAVE.help };
+  setVenue(settings.venue);
+  newGame(Object.assign({ settings, derby }, opts || {}));
+  if (opts && opts.net === 'client') clientInitMatch(opts);
   buildCharacters();
+  METER.on = false; INPUT.power = false; INPUT.pitchKind = 'recta';
   showScreen(null);
   $('#hud').classList.add('on');
   $('#touchUI').classList.toggle('on', IS_TOUCH);
@@ -3099,6 +3385,7 @@ function startDemo() {
   buildCharacters();
 }
 function leaveToMenu() {
+  netReset();
   GAME.paused = false;
   $('#hud').classList.remove('on');
   $('#touchUI').classList.remove('on');
@@ -3140,9 +3427,10 @@ function showEndScreen() {
       if (rec && S.derbyHr > 0) { confetti(0, -4, 160, 8); SFX.levelUp(); }
       $('#bAgain').textContent = '💥 Otra ronda';
     } else {
-      const won = S.score[0] > S.score[1], tie = S.score[0] === S.score[1];
+      const me = Math.max(0, S.me), op = 1 - me;
+      const won = S.score[me] > S.score[op], tie = S.score[me] === S.score[op];
       $('#eTitle').textContent = won ? '¡VICTORIA!' : tie ? 'Empate' : 'Derrota';
-      $('#eTitle').style.color = won ? TEAM_CSS[0] : '#8a93b5';
+      $('#eTitle').style.color = won ? TEAM_CSS[me] : '#8a93b5';
       $('#eScore').innerHTML = `<span style="background:${TEAM_CSS[0]}">${S.score[0]}</span> - <span style="background:${TEAM_CSS[1]}">${S.score[1]}</span>`;
       const n = Math.max(S.innings, S.inning);
       let html = '<tr><th>Equipo</th>' + [...Array(n)].map((_, i) => `<th>${i + 1}</th>`).join('') + '<th>C</th><th>H</th></tr>';
@@ -3150,15 +3438,15 @@ function showEndScreen() {
       $('#eLine').innerHTML = html;
       const val = (s) => s.h * 2 + s.hr * 4 + s.rbi * 2 + s.r + s.pk * 1.5 - s.k * 0.5;
       const mvp = S.players.slice().sort((a, c) => val(c.stats) - val(a.stats))[0];
-      $('#eMvp').innerHTML = `⭐ MVP: <b style="color:${TEAM_CSS[mvp.team]}">${escapeHtml(mvp.name)}</b>${mvp.id === 0 ? ' — ¡eres tú!' : ''}` + (mvp.stats.hr ? ` · ${mvp.stats.hr} HR` : '') + (mvp.stats.pk ? ` · ${mvp.stats.pk} ponches` : '');
-      const rows = S.teams[0];
-      $('#eTable').innerHTML = '<tr><th>Verdes</th><th>VB</th><th>H</th><th>HR</th><th>CI</th><th>CA</th><th>K</th></tr>' +
-        rows.map((p) => `<tr class="${p.id === 0 ? 'me' : ''}"><td>${escapeHtml(p.name)} <small style="opacity:.55">${p.role}</small></td><td>${p.stats.ab}</td><td>${p.stats.h}</td><td>${p.stats.hr}</td><td>${p.stats.rbi}</td><td>${p.stats.r}</td><td>${p.stats.k}</td></tr>`).join('') +
-        `<tr><td colspan="7" style="text-align:center;opacity:.7;font-size:13px">🎯 Ponches de tu lanzador: <b>${S.teams[0][0].stats.pk}</b></td></tr>`;
-      const T = S.teams[0].reduce((a, p) => ({ h: a.h + p.stats.h, hr: a.hr + p.stats.hr }), { h: 0, hr: 0 });
-      let xp = 60 + (won ? 120 : tie ? 40 : 0) + S.score[0] * 12 + T.h * 6 + T.hr * 25 + S.teams[0][0].stats.pk * 8;
-      if (mvp.id === 0) xp += 50;
-      xp *= [0.7, 1, 1.4][S.settings.diff] || 1;
+      $('#eMvp').innerHTML = `⭐ MVP: <b style="color:${TEAM_CSS[mvp.team]}">${escapeHtml(mvp.name)}</b>${mvp.id === S.avatarId ? ' — ¡eres tú!' : ''}` + (mvp.stats.hr ? ` · ${mvp.stats.hr} HR` : '') + (mvp.stats.pk ? ` · ${mvp.stats.pk} ponches` : '');
+      const rows = S.teams[me];
+      $('#eTable').innerHTML = `<tr><th>${TEAM_NAME[me]}</th><th>VB</th><th>H</th><th>HR</th><th>CI</th><th>CA</th><th>K</th></tr>` +
+        rows.map((p) => `<tr class="${p.id === S.avatarId ? 'me' : ''}"><td>${escapeHtml(p.name)} <small style="opacity:.55">${p.role}</small></td><td>${p.stats.ab}</td><td>${p.stats.h}</td><td>${p.stats.hr}</td><td>${p.stats.rbi}</td><td>${p.stats.r}</td><td>${p.stats.k}</td></tr>`).join('') +
+        `<tr><td colspan="7" style="text-align:center;opacity:.7;font-size:13px">🎯 Ponches de tu lanzador: <b>${S.teams[me][0].stats.pk}</b></td></tr>`;
+      const T = S.teams[me].reduce((a, p) => ({ h: a.h + p.stats.h, hr: a.hr + p.stats.hr }), { h: 0, hr: 0 });
+      let xp = 60 + (won ? 120 : tie ? 40 : 0) + S.score[me] * 12 + T.h * 6 + T.hr * 25 + S.teams[me][0].stats.pk * 8;
+      if (mvp.id === S.avatarId) xp += 50;
+      xp *= S.online ? 1.3 : [0.7, 1, 1.4][S.settings.diff] || 1;
       SAVE.games++;
       if (won) { SAVE.wins++; SAVE.streak++; SAVE.best = Math.max(SAVE.best, SAVE.streak); } else SAVE.streak = 0;
       if (won && SAVE.streak >= 2) xp += SAVE.streak * 15;
@@ -3166,14 +3454,18 @@ function showEndScreen() {
       xp = Math.round(xp);
       $('#eXpGain').textContent = `+${xp} XP` + (won && SAVE.streak >= 2 ? ` · 🔥 racha de ${SAVE.streak}` : '');
       grantXp(xp, oldLv);
-      if (won) { confetti(0, -4, 160, 8); SFX.cheer(1); CHEER.t = 3; for (const p of S.teams[0]) { p.anim = 'cheer'; p.animT = 0; } }
-      $('#bAgain').textContent = '¡Revancha!';
+      if (won) { confetti(0, -4, 160, 8); SFX.cheer(1); CHEER.t = 3; if (S.net !== 'client') for (const p of S.teams[me]) { p.anim = 'cheer'; p.animT = 0; } }
+      $('#bAgain').textContent = S.net === 'client' ? 'Esperando al anfitrión…' : '¡Revancha!';
+      $('#bAgain').disabled = S.net === 'client';
     }
+    $('#bEndMenu').textContent = S.online ? 'Salir de la sala' : 'Menú';
+    $('#bToLobby').style.display = S.net === 'host' ? '' : 'none';
     showScreen('scrEnd');
   }, 1700);
 }
-$('#bAgain').onclick = () => { SFX.ui(); startGame(GAME.mode === 'derby'); };
+$('#bAgain').onclick = () => { SFX.ui(); if (S.net === 'host') hostStart(); else startGame(GAME.mode === 'derby'); };
 $('#bEndMenu').onclick = () => { SFX.ui(); leaveToMenu(); };
+$('#bToLobby').onclick = () => { SFX.ui(); netSendAll({ t: 'tolobby' }); backToLobby(); };
 
 // ---------- personalización ----------
 let previewChar = null;
@@ -3241,8 +3533,15 @@ function syncPauseBtns() {
   $('#bHelpTog').textContent = '🎯 Ayuda al batear: ' + (SAVE.help ? 'Sí' : 'No');
   $('#bVib').textContent = '📳 Vibración: ' + (SAVE.vib !== false ? 'Sí' : 'No');
   $('#bVib').style.display = IS_TOUCH ? '' : 'none';
+  $('#bBatMode').textContent = '⚾ Bateo: ' + (cursorMode() ? 'Con cursor' : 'Simple');
+  $('#bThrowMode').textContent = '🧤 Tiros en defensa: ' + (SAVE.throwMode === 'auto' ? 'Automáticos' : 'Manuales');
   syncQualityBtn();
 }
+$('#bBatMode').onclick = () => { SAVE.batMode = cursorMode() ? 'simple' : 'cursor'; storeSave(); syncPauseBtns(); HUD.ctx = '?'; SFX.ui(); };
+$('#bThrowMode').onclick = () => {
+  SAVE.throwMode = SAVE.throwMode === 'auto' ? 'manual' : 'auto'; storeSave(); syncPauseBtns(); SFX.ui();
+  if (S.on && S.me >= 0) { S.throwMode[S.me] = SAVE.throwMode; if (S.net === 'client') netSendCmd({ t: 'tmode', v: SAVE.throwMode, team: S.me }); }
+};
 $('#bTags').onclick = () => { const ks = Object.keys(TAG_MODES); SAVE.tags = ks[(ks.indexOf(SAVE.tags || 'auto') + 1) % ks.length]; storeSave(); syncPauseBtns(); SFX.ui(); };
 $('#bHelpTog').onclick = () => { SAVE.help = SAVE.help ? 0 : 1; storeSave(); if (S.settings) S.settings.help = !!SAVE.help; syncPauseBtns(); SFX.ui(); };
 $('#bVib').onclick = () => { SAVE.vib = SAVE.vib === false; storeSave(); syncPauseBtns(); SFX.ui(); };
@@ -3264,7 +3563,528 @@ document.addEventListener('fullscreenchange', syncFsIcon);
 document.addEventListener('webkitfullscreenchange', syncFsIcon);
 $('#fsBtn').onclick = () => toggleFullscreen();
 $('#bFs').onclick = () => toggleFullscreen();
-document.addEventListener('visibilitychange', () => { if (document.hidden && playing() && GAME.screen !== 'scrEnd') togglePause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && playing() && !S.online && GAME.screen !== 'scrEnd') togglePause(); });
+
+// =========================================================
+//  EN LÍNEA (PeerJS / WebRTC, con relevo MQTT de respaldo)
+//  1 contra 1: el anfitrión (Verdes) simula el partido; el invitado
+//  (Rosas) manda sus controles y recibe el estado ~20 veces por segundo.
+//  El invitado mide su propio tiempo de bateo y el anfitrión lo usa.
+// =========================================================
+const PEER_PREFIX = 'jonronpark-v1-';
+const PEER_OPTS = {
+  debug: 1,
+  config: {
+    iceServers: [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+      { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+    ],
+  },
+};
+const INTERP = 0.1;
+const NET = {
+  role: 'off', peer: null, conns: new Map(), hostConn: null, code: '', guest: null,
+  lobby: [], settings: { innings: 3, diff: 1, venue: 'parque' }, started: false,
+  snapT: 0, pingT: 0, sendT: 0, evQueue: [], snaps: [], tiOff: null, rtt: 0.1,
+  relays: [], relayConns: new Map(), via: '', welcomed: false, lastHostMsg: 0,
+};
+const CL = { pitch: null, swingSent: false, takeSent: false, batAnim: null, scoreT: new Map(), lastPid: 0 };
+const ANIMS = ['idle', 'stance', 'swing', 'bunt', 'pitch', 'throw', 'field', 'squat', 'catch', 'dive', 'lie', 'slide', 'cheer', 'sad'];
+const ANIM_IDX = Object.fromEntries(ANIMS.map((a, i) => [a, i]));
+const BST = ['held', 'pitch', 'air', 'ground', 'dead', 'toss'];
+const r2 = (v) => Math.round((+v || 0) * 100) / 100;
+const num = (v, a, b) => clamp(Number.isFinite(+v) ? +v : 0, a, b);
+function genCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 5; i++) s += A[Math.floor(Math.random() * A.length)];
+  return s;
+}
+function netSendAll(msg) {
+  for (const c of NET.conns.values()) if (c.conn.open) { try { c.conn.send(msg); } catch (e) { /* ignorar */ } }
+}
+function netSend(msg) { if (NET.hostConn && NET.hostConn.open) { try { NET.hostConn.send(msg); } catch (e) { /* ignorar */ } } }
+function netSendCmd(c) { netSend({ t: 'cmd', c }); }
+function netReset() {
+  const peer = NET.peer;
+  if (NET.role === 'host') netSendAll({ t: 'hostbye' });
+  try { if (NET.hostConn && NET.hostConn.relay) NET.hostConn.close(); } catch (e) { /* ignorar */ }
+  for (const cl of NET.relays) { try { cl.end(); } catch (e) { /* ignorar */ } }
+  Object.assign(NET, { relays: [], welcomed: false, via: '', role: 'off', peer: null, hostConn: null, lobby: [], started: false, snaps: [], evQueue: [], tiOff: null, guest: null });
+  NET.relayConns.clear(); NET.conns.clear();
+  Object.assign(CL, { pitch: null, swingSent: false, takeSent: false, batAnim: null, lastPid: 0 });
+  CL.scoreT.clear();
+  try { if (peer) peer.destroy(); } catch (e) { /* ignorar */ }
+}
+function sanitizeLook(l) {
+  const out = {};
+  for (const k of Object.keys(OPTS)) out[k] = l && OPTS[k].some((o) => o.v === l[k]) ? l[k] : OPTS[k][0].v;
+  return out;
+}
+function linkFor(code) {
+  const u = new URL(location.href);
+  u.search = ''; u.hash = '';
+  u.searchParams.set('sala', code);
+  return u.toString();
+}
+// comandos del invitado: solo lo que el juego entiende, con números acotados
+function cleanCmd(c) {
+  if (!c || typeof c !== 'object') return null;
+  const t = String(c.t || '');
+  const o = { t };
+  if (t === 'swing') {
+    o.kind = ['normal', 'power', 'bunt'].includes(c.kind) ? c.kind : 'normal';
+    o.err = num(c.err, -2, 2); o.aim = num(c.aim, -0.8, 0.8); o.mode = c.mode === 'cursor' ? 'cursor' : 'simple';
+    o.cur = { x: num(c.cur && c.cur.x, -1, 1), y: num(c.cur && c.cur.y, 0, 2) };
+  } else if (t === 'pitch') { o.kind = PITCHES[c.kind] ? c.kind : 'recta'; o.tx = num(c.tx, -0.95, 0.95); o.ty = num(c.ty, 0.12, 1.6); o.acc = num(c.acc, 0, 1); }
+  else if (t === 'throw') { o.base = num(c.base, 0, 4) | 0; o.dir = c.dir ? { x: num(c.dir.x, -1, 1), z: num(c.dir.z, -1, 1) } : null; }
+  else if (t === 'run') o.dir = c.dir > 0 ? 1 : -1;
+  else if (t === 'runTo' || t === 'steal') o.base = num(c.base, 1, 4) | 0;
+  else if (t === 'tmode') o.v = c.v === 'auto' ? 'auto' : 'manual';
+  else if (!['take', 'jump', 'dive'].includes(t)) return null;
+  return o;
+}
+
+// ---------- relevo (plan B): si la conexión directa falla, los mensajes viajan por un servidor MQTT público ----------
+const RELAY_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
+const LIB_MQTT = 'https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js';
+const LIB_QR = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+const scriptCache = {};
+function loadScript(src) {
+  if (!scriptCache[src]) {
+    scriptCache[src] = new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = res;
+      s.onerror = () => { delete scriptCache[src]; rej(new Error('no se pudo cargar ' + src)); };
+      document.head.appendChild(s);
+    });
+  }
+  return scriptCache[src];
+}
+const rTopic = (code, k) => `jonronpark/v1/${code}/${k}`;
+function relayConnectOne(i) {
+  return loadScript(LIB_MQTT).then(() => new Promise((res, rej) => {
+    let done = false;
+    const cl = window.mqtt.connect(RELAY_BROKERS[i], { clientId: 'jp_' + Math.random().toString(36).slice(2, 12), clean: true, connectTimeout: 7000, reconnectPeriod: 2500, keepalive: 30 });
+    cl.on('connect', () => { if (!done) { done = true; res(cl); } });
+    cl.on('error', () => { /* reintenta solo */ });
+    setTimeout(() => { if (!done) { done = true; try { cl.end(true); } catch (e) { /* ignorar */ } rej(new Error('relay timeout')); } }, 8000);
+  }));
+}
+const waitFor = (fn, ms) => new Promise((res) => {
+  const t0 = performance.now();
+  const iv = setInterval(() => { if (fn()) { clearInterval(iv); res(true); } else if (performance.now() - t0 > ms) { clearInterval(iv); res(false); } }, 100);
+});
+function hostRelayStart(code) {
+  RELAY_BROKERS.forEach((_, i) => {
+    relayConnectOne(i).then((cl) => {
+      if (NET.role !== 'host' || NET.code !== code) { cl.end(true); return; }
+      NET.relays.push(cl);
+      cl.subscribe(rTopic(code, 'h'));
+      cl.on('message', (tp, payload) => {
+        let m;
+        try { m = JSON.parse(payload.toString()); } catch (e) { return; }
+        if (m && typeof m.f === 'string') hostRelayMsg(cl, m.f.slice(0, 16), m.d);
+      });
+    }).catch(() => { /* ese servidor no responde: queda el otro */ });
+  });
+}
+function hostRelayMsg(cl, cid, d) {
+  const key = 'relay:' + cid;
+  let v = NET.relayConns.get(key);
+  if (!v) {
+    if (!d || d.t !== 'hello') return;
+    v = { peer: key, open: true, relay: true, lastT: 0, send(msg) { if (this.open) cl.publish(rTopic(NET.code, 'c/' + cid), JSON.stringify(msg)); }, close() { this.open = false; } };
+    NET.relayConns.set(key, v);
+  }
+  v.lastT = performance.now();
+  if (d && d.t === 'bye') { v.open = false; NET.relayConns.delete(key); hostDrop(v); return; }
+  hostOnData(v, d);
+}
+async function clientRelayJoin(code) {
+  setJoinStatus('Probando conexión por servidor de relevo…');
+  const cid = Math.random().toString(36).slice(2, 12);
+  for (let i = 0; i < RELAY_BROKERS.length; i++) {
+    let cl;
+    try { cl = await relayConnectOne(i); } catch (e) { continue; }
+    if (NET.role !== 'client' || NET.code !== code) { cl.end(true); return; }
+    const conn = {
+      open: true, relay: true,
+      send(msg) { if (this.open) cl.publish(rTopic(code, 'h'), JSON.stringify({ f: cid, d: msg })); },
+      close() { try { this.send({ t: 'bye' }); } catch (e) { /* ignorar */ } this.open = false; setTimeout(() => { try { cl.end(true); } catch (e) { /* ignorar */ } }, 200); },
+    };
+    cl.subscribe(rTopic(code, 'c/' + cid));
+    cl.on('message', (tp, payload) => {
+      if (NET.hostConn !== conn) return;
+      let m;
+      try { m = JSON.parse(payload.toString()); } catch (e) { return; }
+      NET.lastHostMsg = performance.now();
+      clientOnData(m);
+    });
+    NET.hostConn = conn; NET.via = 'relevo'; NET.welcomed = false;
+    NET.lastHostMsg = performance.now();
+    conn.send(helloMsg());
+    if (await waitFor(() => NET.welcomed, 6000)) { setJoinStatus('¡Conectado (por relevo)!'); return; }
+    conn.close();
+    if (NET.hostConn === conn) NET.hostConn = null;
+  }
+  if (NET.role === 'client' && NET.code === code) setJoinStatus('No se pudo conectar. Revisa el código, que la sala siga abierta en el otro dispositivo y tu internet.');
+}
+// latidos: el anfitrión detecta invitados caídos; el invitado detecta anfitrión caído
+setInterval(() => {
+  const now = performance.now();
+  if (NET.role === 'host') {
+    if (GAME.mode !== 'online') netSendAll({ t: 'ping', ts: now });
+    for (const [key, v] of NET.relayConns) if (now - v.lastT > 12000) { v.open = false; NET.relayConns.delete(key); hostDrop(v); }
+  } else if (NET.role === 'client' && NET.welcomed && NET.hostConn && now - NET.lastHostMsg > 12000) {
+    toast('Se perdió la conexión con el anfitrión');
+    leaveToMenu();
+  }
+}, 2000);
+
+// ---------- anfitrión ----------
+function hostCreate() {
+  netReset();
+  NET.role = 'host';
+  NET.code = genCode();
+  NET.settings = { innings: SAVE.innings, diff: SAVE.diff, venue: SAVE.venue };
+  NET.lobby = [{ id: 'h', name: SAVE.name, look: SAVE.look, team: 0, tm: SAVE.throwMode || 'manual' }];
+  showScreen('scrLobby');
+  setLobbyStatus('Creando sala…');
+  renderLobby();
+  hostRelayStart(NET.code);
+  loadScript(LIB_QR).then(renderLobby).catch(() => { /* sin QR */ });
+  if (!window.Peer) { setLobbyStatus('Sala lista (por relevo). Comparte el código, el link o el QR.'); return; }
+  const peer = new Peer(PEER_PREFIX + NET.code, PEER_OPTS);
+  NET.peer = peer;
+  peer.on('open', () => { setLobbyStatus('Comparte el código, el link o el QR. Si nadie entra, juegas contra la PC.'); renderLobby(); });
+  peer.on('connection', (conn) => {
+    conn.on('data', (d) => hostOnData(conn, d));
+    conn.on('close', () => hostDrop(conn));
+    conn.on('error', () => hostDrop(conn));
+  });
+  peer.on('error', (err) => {
+    if (err.type === 'unavailable-id') { hostCreate(); return; }
+    if (NET.peer === peer) setLobbyStatus('La conexión directa no está disponible; tu amigo entrará por relevo.');
+  });
+  peer.on('disconnected', () => { try { if (NET.peer === peer) peer.reconnect(); } catch (e) { /* ignorar */ } });
+}
+function hostOnData(conn, d) {
+  if (!d || typeof d !== 'object') return;
+  const c = NET.conns.get(conn.peer);
+  switch (d.t) {
+    case 'hello': {
+      if (c) return;
+      if (NET.guest) { try { conn.send({ t: 'full' }); } catch (e) { /* ignorar */ } setTimeout(() => { try { conn.close(); } catch (e) { /* ignorar */ } }, 400); return; }
+      const entry = { id: 'g', name: String(d.name || 'Amigo').slice(0, 12), look: sanitizeLook(d.look), team: 1, tm: d.tm === 'auto' ? 'auto' : 'manual' };
+      NET.lobby = [NET.lobby[0], entry];
+      NET.conns.set(conn.peer, { conn, rtt: 0.1 });
+      NET.guest = conn.peer;
+      conn.send({ t: 'welcome', code: NET.code });
+      broadcastLobby();
+      toast(entry.name + ' entró a la sala');
+      SFX.ui();
+      // partido en marcha (p. ej. se le cortó la conexión): vuelve a jugar con los Rosas
+      if (S.net === 'host' && S.on && !S.ended && GAME.mode === 'online') {
+        S.ctl[1] = true; S.remote[1] = true; S.throwMode[1] = entry.tm;
+        conn.send({ t: 'start', roster: S.players.map((p) => ({ n: p.name, l: p.look, c: p.captain ? 1 : 0 })), settings: S.settings, me: 1 });
+        toast(entry.name + ' vuelve a jugar con los Rosas');
+      }
+      break;
+    }
+    case 'in':
+      if (c && S.net === 'host' && S.remote[1]) S.inp[1] = { mx: num(d.mx, -1, 1), mz: num(d.mz, -1, 1) };
+      break;
+    case 'cmd': {
+      if (!c || S.net !== 'host' || !S.remote[1]) return;
+      const cc = cleanCmd(d.c);
+      if (!cc) return;
+      cc.team = 1;
+      if (cc.t === 'tmode') S.throwMode[1] = cc.v; else S.cmds.push(cc);
+      break;
+    }
+    case 'pong': if (c) c.rtt = clamp((performance.now() - d.ts) / 1000, 0, 1); break;
+    case 'cping': try { conn.send({ t: 'cpong', ts: d.ts }); } catch (e) { /* ignorar */ } break;
+  }
+}
+function hostDrop(conn) {
+  if (!NET.conns.has(conn.peer)) return;
+  NET.conns.delete(conn.peer);
+  const g = NET.lobby[1];
+  NET.lobby = NET.lobby.slice(0, 1);
+  if (NET.guest === conn.peer) NET.guest = null;
+  if (g) toast(g.name + ' salió' + (S.net === 'host' && !S.ended ? ': la PC juega por los Rosas' : ''));
+  if (S.net === 'host') { S.ctl[1] = false; S.remote[1] = false; S.throwMode[1] = 'auto'; S.inp[1] = { mx: 0, mz: 0 }; }
+  broadcastLobby();
+}
+function broadcastLobby() {
+  netSendAll({ t: 'lobby', players: NET.lobby, settings: NET.settings, started: NET.started });
+  renderLobby();
+}
+function hostStart() {
+  const g = NET.lobby.find((p) => p.team === 1);
+  const settings = { innings: NET.settings.innings, diff: NET.settings.diff, venue: NET.settings.venue, help: !!SAVE.help };
+  NET.started = true;
+  NET.snapT = 0; NET.evQueue = [];
+  startGame(false, {
+    net: 'host', online: true, me: 0, ctl: [true, !!g], remote: [false, !!g],
+    captains: [{ name: SAVE.name, look: SAVE.look }, g ? { name: g.name, look: g.look } : null],
+    throwMode: [SAVE.throwMode || 'manual', g ? g.tm : 'auto'], settings,
+  });
+  const roster = S.players.map((p) => ({ n: p.name, l: p.look, c: p.captain ? 1 : 0 }));
+  netSendAll({ t: 'start', roster, settings, me: 1 });
+  broadcastLobby();
+}
+function netSnapshot() {
+  const b = S.ball;
+  return {
+    t: 's', ti: performance.now() / 1000, ph: S.phase, pt: r2(S.t), h: S.half, inn: S.inning, o: S.outs, b: S.balls, k: S.strikes,
+    sc: S.score, hi: S.hits, ln: S.line, bat: S.batter ? S.batter.id : -1, ctrl: S.ctrlId,
+    cd: +!!S.contactDone, bd: +!!S.batted, wk: +!!S.walk, hr: +!!S.hr, sp: +!!S.stealPlay, q: S.queued && S.queued.team === 1 ? S.queued.base : 0,
+    p: S.players.map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.ry), ANIM_IDX[p.anim] ?? 0, r2(p.animT)]),
+    bl: [r2(b.x), r2(b.y), r2(b.z), r2(b.vx), r2(b.vy), r2(b.vz), Math.max(0, BST.indexOf(b.st)), b.holder ? b.holder.id : -1, (b.bounced ? 1 : 0) | (b.outOfPark ? 2 : 0) | (b.batted ? 4 : 0)],
+    ru: S.runners.map((r) => [r.pl.id, r2(r.p), r2(r.target), (r.out ? 1 : 0) | (r.scored ? 2 : 0) | (r.isBatter ? 4 : 0) | (r.steal ? 8 : 0) | (r.stealing ? 16 : 0), r2(r.slideT)]),
+  };
+}
+function hostTick(dt, evs) {
+  for (const e of evs) NET.evQueue.push(e);
+  NET.snapT += dt; NET.pingT += dt;
+  if (NET.snapT >= 1 / 20) {
+    NET.snapT = 0;
+    const s = netSnapshot();
+    s.ev = NET.evQueue.splice(0);
+    netSendAll(s);
+  }
+  if (NET.pingT >= 1) { NET.pingT = 0; netSendAll({ t: 'ping', ts: performance.now() }); }
+}
+// el lanzamiento sale ya: el invitado lo dibuja con su propio reloj para poder batear a tiempo
+function netPitchRelease(p) {
+  netSendAll({ t: 'rel', id: p.id, kind: p.kind, p0: p.p0, v0: p.v0, a: p.a, tC: p.tC, T0: p.T0, cross: p.cross, strike: p.strike });
+}
+function netSendEnd() {
+  netSendAll({ t: 'end', sc: S.score, ln: S.line, hi: S.hits, inn: S.inning, stats: S.players.map((p) => p.stats) });
+  NET.started = false;
+  setTimeout(broadcastLobby, 200);
+}
+
+// ---------- invitado ----------
+const helloMsg = () => ({ t: 'hello', name: SAVE.name, look: SAVE.look, tm: SAVE.throwMode || 'manual' });
+function clientJoin(code) {
+  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length < 4) { setJoinStatus('Escribe el código de la sala'); return; }
+  netReset();
+  NET.role = 'client'; NET.code = code;
+  setJoinStatus('Conectando…');
+  let fellBack = false;
+  const fallback = () => {
+    if (fellBack || NET.role !== 'client' || NET.code !== code || NET.welcomed) return;
+    fellBack = true;
+    const peer = NET.peer;
+    NET.peer = null;
+    if (NET.hostConn && !NET.hostConn.relay) NET.hostConn = null;
+    try { if (peer) peer.destroy(); } catch (e) { /* ignorar */ }
+    clientRelayJoin(code);
+  };
+  if (!window.Peer || new URLSearchParams(location.search).has('relevo')) { fallback(); return; }
+  const peer = new Peer(PEER_OPTS);
+  NET.peer = peer;
+  const to = setTimeout(fallback, 7000);
+  peer.on('open', () => {
+    const conn = peer.connect(PEER_PREFIX + code, { reliable: true, serialization: 'json' });
+    NET.hostConn = conn; NET.via = 'directa';
+    conn.on('open', () => { clearTimeout(to); conn.send(helloMsg()); setJoinStatus('¡Conectado!'); });
+    conn.on('data', clientOnData);
+    conn.on('close', () => { if (NET.peer === peer && NET.hostConn === conn) { toast('Se cerró la conexión con el anfitrión'); leaveToMenu(); } });
+    conn.on('error', fallback);
+    setTimeout(() => {
+      const pc = conn.peerConnection;
+      if (pc) pc.addEventListener('iceconnectionstatechange', () => { if (pc.iceConnectionState === 'failed') fallback(); });
+    }, 0);
+  });
+  peer.on('error', () => { clearTimeout(to); fallback(); });
+}
+function clientOnData(d) {
+  if (!d || typeof d !== 'object') return;
+  NET.lastHostMsg = performance.now();
+  switch (d.t) {
+    case 'welcome': NET.code = d.code; NET.welcomed = true; showScreen('scrLobby'); renderLobby(); break;
+    case 'hostbye': if (NET.role === 'client') { toast('El anfitrión cerró la sala'); leaveToMenu(); } break;
+    case 'full': setJoinStatus('La sala ya tiene dos jugadores'); break;
+    case 'lobby':
+      NET.lobby = d.players || []; NET.settings = d.settings || NET.settings; NET.started = d.started;
+      if (GAME.mode === 'menu' && NET.settings.venue) setVenue(NET.settings.venue);
+      renderLobby();
+      break;
+    case 'start':
+      if (!Array.isArray(d.roster) || d.roster.length !== 18) return;
+      startGame(false, { net: 'client', online: true, me: 1, ctl: [true, true], remote: [false, false], roster: d.roster, settings: Object.assign({}, d.settings, { help: !!SAVE.help }) });
+      break;
+    case 's': if (S.net === 'client') clientSnap(d); break;
+    case 'rel': if (S.net === 'client') clientRelease(d); break;
+    case 'end': if (S.net === 'client') clientEnd(d); break;
+    case 'ping': netSend({ t: 'pong', ts: d.ts }); break;
+    case 'cpong': NET.rtt = damp(NET.rtt, clamp((performance.now() - d.ts) / 1000, 0, 1), 3, 1); break;
+    case 'tolobby': if (S.net === 'client') backToLobby(); break;
+  }
+}
+function clientInitMatch() {
+  S.events = []; NET.snaps = []; NET.tiOff = null;
+  Object.assign(CL, { pitch: null, swingSent: false, takeSent: false, batAnim: null, lastPid: 0 });
+  CL.scoreT.clear();
+  S.clock = performance.now() / 1000;
+}
+function clientSnap(s) {
+  const now = performance.now() / 1000;
+  const off = now - s.ti;
+  if (NET.tiOff === null || off < NET.tiOff) NET.tiOff = off; else NET.tiOff += (off - NET.tiOff) * 0.02;
+  NET.snaps.push(s);
+  while (NET.snaps.length > 40) NET.snaps.shift();
+  if (s.ev) for (const e of s.ev) setTimeout(() => { if (S.net === 'client') S.events.push(e); }, INTERP * 1000);
+}
+function clientRelease(d) {
+  const now = performance.now() / 1000;
+  const p = { id: d.id, kind: d.kind, p0: d.p0, v0: d.v0, a: d.a, tC: +d.tC, T0: +d.T0, cross: d.cross, strike: !!d.strike };
+  p.t0 = now + INTERP; // sale a la vez que el brazo del lanzador que se ve (va INTERP por detrás)
+  p.tContactAbs = p.t0 + p.tC;
+  Object.assign(CL, { pitch: p, swingSent: false, takeSent: false, lastPid: d.id });
+  S.pitch = p;
+}
+// el invitado batea con SU reloj: manda cuánto se adelantó o atrasó y dónde tenía el cursor
+function clientSwing(c) {
+  const P = CL.pitch;
+  if (!P || CL.swingSent) return;
+  const now = performance.now() / 1000;
+  if (c.kind === 'bunt') { const lead = P.tContactAbs - now; c.err = lead < 0.1 ? 0.1 - lead : lead > 0.8 ? -(lead - 0.8) : 0; }
+  else c.err = now + SWING_DT - P.tContactAbs;
+  CL.swingSent = true;
+  CL.batAnim = { anim: c.kind === 'bunt' ? 'bunt' : 'swing', t0: now };
+  c.team = S.me;
+  netSendCmd(c);
+  if (c.kind !== 'bunt') SFX.swish(1);
+}
+function clientEnd(d) {
+  S.score = d.sc; S.line = d.ln; S.hits = d.hi; S.inning = d.inn;
+  if (Array.isArray(d.stats)) d.stats.forEach((st, i) => { if (S.players[i] && st) S.players[i].stats = st; });
+  S.ended = true; S.phase = 'end';
+  showEndScreen();
+}
+function clientTick(dt, inp) {
+  const now = performance.now() / 1000;
+  S.clock = now;
+  NET.sendT += dt; NET.pingT += dt;
+  if (NET.sendT >= (NET.via === 'relevo' ? 1 / 15 : 1 / 25)) { NET.sendT = 0; netSend({ t: 'in', mx: r2(inp.mx), mz: r2(inp.mz) }); }
+  if (NET.pingT >= 1) { NET.pingT = 0; netSend({ t: 'cping', ts: performance.now() }); }
+  if (!NET.snaps.length || NET.tiOff === null) return;
+  const rt = now - NET.tiOff - INTERP;
+  let s0 = NET.snaps[0], s1 = null;
+  for (let i = NET.snaps.length - 1; i >= 0; i--) if (NET.snaps[i].ti <= rt) { s0 = NET.snaps[i]; s1 = NET.snaps[i + 1] || null; break; }
+  const k = s1 ? clamp((rt - s0.ti) / Math.max(0.001, s1.ti - s0.ti), 0, 1) : 0;
+  const el = Math.max(0, rt - s0.ti);
+  // estado del partido
+  Object.assign(S, {
+    phase: s0.ph, t: s0.pt + el, half: s0.h, inning: s0.inn, outs: s0.o, balls: s0.b, strikes: s0.k, score: s0.sc, hits: s0.hi, line: s0.ln || S.line,
+    batter: s0.bat >= 0 ? S.players[s0.bat] : null, ctrlId: s0.ctrl, contactDone: !!s0.cd, batted: !!s0.bd, walk: !!s0.wk, hr: !!s0.hr, stealPlay: !!s0.sp,
+    queued: s0.q ? { base: s0.q, team: 1 } : null,
+  });
+  // jugadores (interpolados)
+  for (let i = 0; i < s0.p.length; i++) {
+    const a = s0.p[i], b1 = s1 ? s1.p[i] : null, p = S.players[a[0]];
+    if (!p) continue;
+    const L = (j) => (b1 ? lerp(a[j], b1[j], k) : a[j]);
+    const ox = p.x, oz = p.z;
+    p.x = L(1); p.y = L(2); p.z = L(3);
+    if (Math.hypot(p.x - ox, p.z - oz) > 3) p.snap = true;
+    let da = (b1 ? b1[4] : a[4]) - a[4];
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    p.ry = a[4] + da * k;
+    p.anim = ANIMS[a[5]] || 'idle'; p.animT = a[6] + el;
+  }
+  // mi swing se ve al instante (el anfitrión lo confirma después)
+  if (CL.batAnim && S.batter && now - CL.batAnim.t0 < 0.95) { S.batter.anim = CL.batAnim.anim; S.batter.animT = now - CL.batAnim.t0; }
+  // corredores
+  S.runners = s0.ru.map((a) => {
+    const b1 = s1 && s1.ru.find((x) => x[0] === a[0]);
+    const scored = !!(a[3] & 2);
+    if (scored && !CL.scoreT.has(a[0])) CL.scoreT.set(a[0], now);
+    if (!scored) CL.scoreT.delete(a[0]);
+    return { pl: S.players[a[0]], p: b1 ? lerp(a[1], b1[1], k) : a[1], target: a[2], out: !!(a[3] & 1), scored, isBatter: !!(a[3] & 4), steal: !!(a[3] & 8), stealing: !!(a[3] & 16), slideT: a[4], scoreT: CL.scoreT.get(a[0]) || now, base: Math.floor(a[1]) };
+  });
+  for (const r of S.runners) { if (r.out || r.scored || !r.pl) continue; const P = runnerPos(r); r.pl.x = P.x; r.pl.z = P.z; if (r.slideT > 0) r.pl.anim = 'slide'; }
+  // pelota
+  const B = S.ball, bl = s0.bl, st = BST[bl[6]] || 'held';
+  B.holder = bl[7] >= 0 ? S.players[bl[7]] : null;
+  B.bounced = !!(bl[8] & 1); B.outOfPark = !!(bl[8] & 2); B.batted = !!(bl[8] & 4);
+  const P = CL.pitch, pt = P ? now - P.t0 : 99;
+  if (P && !S.contactDone && pt > -INTERP && pt < P.tC + 0.55 && (S.phase === 'windup' || S.phase === 'flight' || S.phase === 'pitch')) {
+    if (pt < 0) { B.st = 'held'; B.holder = S.players.find((q) => q.team === 1 - S.half && q.role === 'P') || null; }
+    else { B.st = 'pitch'; B.holder = null; pitchAt(P, pt, B); B.vx = P.v0.x + P.a.x * pt; B.vy = P.v0.y + P.a.y * pt; B.vz = P.v0.z; }
+  } else {
+    B.st = st;
+    const b1 = s1 ? s1.bl : null;
+    if (b1 && BST[b1[6]] === st && st !== 'held') { B.x = lerp(bl[0], b1[0], k); B.y = lerp(bl[1], b1[1], k); B.z = lerp(bl[2], b1[2], k); }
+    else { const t = Math.min(el, 0.2); B.x = bl[0] + bl[3] * t; B.z = bl[2] + bl[5] * t; B.y = st === 'air' ? Math.max(BALL_R, bl[1] + bl[4] * t - 0.5 * G * t * t) : bl[1]; }
+    B.vx = bl[3]; B.vy = bl[4]; B.vz = bl[5];
+  }
+  S.swing = CL.swingSent && P && !S.contactDone ? { kind: 'normal' } : S.contactDone ? { kind: 'normal' } : null;
+  // ¿la pelota pasó y no batee? se lo digo al anfitrión
+  if (P && humanBats() && !CL.swingSent && !CL.takeSent && now > P.tContactAbs + 0.04) { CL.takeSent = true; netSendCmd({ t: 'take', team: S.me }); }
+}
+function backToLobby() {
+  GAME.mode = 'menu'; GAME.paused = false;
+  $('#hud').classList.remove('on');
+  $('#touchUI').classList.remove('on');
+  startDemo();
+  if (NET.role !== 'off') { showScreen('scrLobby'); renderLobby(); } else showScreen('scrMenu');
+}
+
+// ---------- sala ----------
+function setLobbyStatus(s) { $('#lStatus').textContent = s; }
+function setJoinStatus(s) { $('#jStatus').textContent = s; }
+function renderLobby() {
+  $('#lCode').textContent = NET.code || '-----';
+  $('#lLink').value = NET.code ? linkFor(NET.code) : '';
+  const qrBox = $('#lQr');
+  if (NET.code && window.qrcode && qrBox.dataset.code !== NET.code) {
+    try { const q = window.qrcode(0, 'M'); q.addData(linkFor(NET.code)); q.make(); qrBox.innerHTML = q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); qrBox.dataset.code = NET.code; } catch (e) { /* sin QR */ }
+  }
+  const host = NET.role === 'host';
+  $('#qrRow').style.display = NET.code && host ? '' : 'none';
+  for (const t of [0, 1]) {
+    const p = NET.lobby.find((x) => x.team === t);
+    const me = (host && t === 0) || (!host && t === 1);
+    $('#lTeam' + t).innerHTML = p ? `<div class="pl">${escapeHtml(p.name)}${me ? ' <em>(tú)</em>' : ''}${t === 0 ? ' <em>👑</em>' : ''}</div>` : '<div class="pl"><em>🤖 PC (esperando a tu amigo…)</em></div>';
+  }
+  $('#lHostOpts').style.display = host ? '' : 'none';
+  $('#bStart').style.display = host ? '' : 'none';
+  $('#bStart').textContent = NET.lobby.length > 1 ? '¡Empezar partido!' : 'Empezar contra la PC';
+  $$('[data-lopt]').forEach((row) => {
+    const k = row.dataset.lopt;
+    row.querySelectorAll('.chip').forEach((c) => c.classList.toggle('sel', c.dataset.v === String(NET.settings[k])));
+  });
+  if (!host) setLobbyStatus(NET.started ? 'Hay un partido en curso: entrarás en el siguiente.' : 'Esperando a que el anfitrión empiece… (tú juegas con los Rosas)');
+}
+$('#bHost').onclick = () => { SFX.resume(); SFX.ui(); hostCreate(); };
+$('#bJoin').onclick = () => { SFX.resume(); clientJoin($('#jCode').value); };
+$('#jCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') clientJoin($('#jCode').value); });
+$('#bStart').onclick = () => { SFX.resume(); if (NET.role === 'host') hostStart(); };
+$('#bLeave').onclick = () => { SFX.ui(); leaveToMenu(); };
+$('#bCopy').onclick = () => {
+  const v = $('#lLink').value;
+  const ok = () => toast('Link copiado: pásaselo a tu amigo');
+  if (navigator.clipboard) navigator.clipboard.writeText(v).then(ok).catch(() => { $('#lLink').select(); document.execCommand('copy'); ok(); });
+  else { $('#lLink').select(); document.execCommand('copy'); ok(); }
+};
+$$('[data-lopt]').forEach((row) => row.addEventListener('click', (e) => {
+  const c = e.target.closest('.chip');
+  if (!c || NET.role !== 'host') return;
+  const k = row.dataset.lopt, v = c.dataset.v;
+  NET.settings[k] = isNaN(+v) ? v : +v;
+  if (k === 'venue') setVenue(v);
+  SFX.ui();
+  broadcastLobby();
+}));
 
 // =========================================================
 //  CALIDAD Y BUCLE PRINCIPAL
@@ -3321,9 +4141,38 @@ $('#bQuality').onclick = () => {
   storeSave(); startQuality(); SFX.ui();
 };
 
-let last = performance.now(), acc = 0;
+let last = performance.now(), acc = 0, lastRaf = 0, lastWk = 0;
+// avanza la simulación (local o anfitrión) y reparte los eventos
+function simAdvance(dt) {
+  let sdt = dt;
+  if (GAME.hitStop > 0) { GAME.hitStop -= dt; sdt *= 0.12; }
+  if (GAME.slowmo > 0) { GAME.slowmo -= dt; sdt *= 0.35; }
+  if (GAME.paused && !S.online) sdt = 0;
+  GAME.tScale = dt > 0 ? sdt / dt : 1;
+  acc += sdt;
+  let n = 0;
+  while (acc >= STEP && n < 8) { simStep(STEP); acc -= STEP; n++; }
+  if (n >= 8) acc = 0;
+  const evs = S.events.splice(0);
+  if (S.net === 'host') hostTick(dt, evs);
+  for (const e of evs) handleEvent(e);
+  return sdt;
+}
+// con la pestaña oculta el navegador frena requestAnimationFrame:
+// un worker mantiene vivo el partido del anfitrión para su amigo
+try {
+  const wk = new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),16)'], { type: 'text/javascript' })));
+  wk.onmessage = () => {
+    const now = performance.now();
+    if (now - lastRaf < 250) { lastWk = now; return; }
+    const dt = Math.min(0.12, (now - lastWk) / 1000);
+    lastWk = now;
+    if (S.on && S.net === 'host') simAdvance(dt);
+  };
+} catch (e) { /* sin worker: solo funciona con la pestaña visible */ }
 function frame(now) {
   requestAnimationFrame(frame);
+  lastRaf = performance.now();
   const rawDt = (now - last) / 1000;
   const dt = Math.min(0.05, Math.max(0, rawDt));
   last = now;
@@ -3331,21 +4180,21 @@ function frame(now) {
   if (S.on) {
     const ctx = uiCtx();
     updateAim(dt, ctx);
+    meterTick(dt, ctx);
     const mv = moveInput();
-    S.inp.mx = ctx === 'field' ? mv.x : 0; S.inp.mz = ctx === 'field' ? -mv.y : 0;
-    let sdt = dt;
-    if (GAME.hitStop > 0) { GAME.hitStop -= dt; sdt *= 0.12; }
-    if (GAME.slowmo > 0) { GAME.slowmo -= dt; sdt *= 0.35; }
-    if (GAME.paused) sdt = 0;
-    GAME.tScale = dt > 0 ? sdt / dt : 1;
-    acc += sdt;
-    let n = 0;
-    while (acc >= STEP && n < 8) { simStep(STEP); acc -= STEP; n++; }
-    if (n >= 8) acc = 0;
-    const evs = S.events.splice(0);
-    for (const e of evs) handleEvent(e);
-    renderGame(sdt);
-    if (GAME.mode !== 'menu') updateHud(ctx);
+    const inp = { mx: ctx === 'field' ? mv.x : 0, mz: ctx === 'field' ? -mv.y : 0 };
+    if (S.net === 'client') {
+      // invitado: no simula; recibe el estado del anfitrión y le manda sus controles
+      clientTick(dt, inp);
+      for (const e of S.events.splice(0)) handleEvent(e);
+      renderGame(dt);
+      updateHud(ctx);
+    } else {
+      if (S.me >= 0) S.inp[S.me] = inp;
+      const sdt = simAdvance(dt);
+      renderGame(sdt);
+      if (GAME.mode !== 'menu') updateHud(ctx);
+    }
   }
   if (previewChar) {
     const t = now / 1000;
@@ -3364,5 +4213,9 @@ startQuality();
 syncPauseBtns();
 startDemo();
 showScreen('scrMenu');
+{
+  const sala = new URLSearchParams(location.search).get('sala');
+  if (sala) { showScreen('scrJoin'); $('#jCode').value = sala.toUpperCase(); setTimeout(() => clientJoin(sala), 300); }
+}
 requestAnimationFrame(frame);
-window.__JP = { S, GAME, INPUT, act, startGame, ff(sec) { for (let i = 0; i < sec * 60; i++) { simStep(STEP); for (const e of S.events.splice(0)) handleEvent(e); } } };
+window.__JP = { S, GAME, INPUT, NET, CL, act, baseTap, pushCmd, startGame, ff(sec) { for (let i = 0; i < sec * 60; i++) { simStep(STEP); for (const e of S.events.splice(0)) handleEvent(e); } } };

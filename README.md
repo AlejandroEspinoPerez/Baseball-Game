@@ -8,31 +8,40 @@ Usa el mismo estilo que [Remate Park](https://github.com/AlejandroEspinoPerez/Vo
 ## Modos
 
 - **Partido contra la PC**: 1, 2, 3 o 5 entradas, tres dificultades y cuatro estadios (Parque, Playa, Ciudad al atardecer y Estadio de noche).
+- **En línea (1 contra 1)**: 🌐 Crear sala y compartir el código, el link o el QR; tu amigo entra con 🔗 Unirme. El anfitrión juega con los Verdes y el invitado con los Rosas. Si nadie entra, o alguien se desconecta, juega la PC; si vuelve a entrar, recupera su equipo.
 - **Derby de jonrones**: batea hasta fallar 10 veces y bate tu récord.
 - **Personalizar jugador**: piel, peinado, accesorios, color del bate y del guante, y celebración. Se desbloquean más opciones al subir de nivel.
+
+## Cómo se juega
+
+- **Al bate (con cursor)**: mueve el círculo del bate hasta donde va a pasar la pelota y batea justo cuando llega. Si la pelota pasa por arriba del centro del círculo sale elevada; por abajo, rola. Adelantado va hacia la izquierda y tarde hacia la derecha. **PODER** achica el círculo y pega más fuerte. También hay bateo **simple** (solo cuenta el momento).
+- **Lanzando**: apunta en la zona, elige recta, curva, slider o cambio y suelta cuando el aro se cierre en el círculo verde. Cuanto más justo, más preciso y rápido.
+- **Defendiendo**: controlas al jugador más cerca de la pelota (si no lo mueves, corre solo). Con el **rombo de bases** eliges a qué base tirar, incluso antes de atrapar. Los tiros pueden ser manuales o automáticos.
+- **Corriendo**: CORRER / VOLVER mueven a todos; tocando una base del rombo mandas o regresas a un solo corredor. Antes del lanzamiento puedes **robar base**.
 
 ## Controles
 
 | | PC | Móvil |
 |---|---|---|
-| Apuntar el batazo | Ratón | Joystick |
-| Batear / batazo de poder / toque | Clic izq / Espacio / E | BATEAR / PODER / TOQUE |
-| Lanzar recta / curva / cambio | Clic izq / Clic der / E | RECTA / CURVA / CAMBIO |
+| Círculo del bate / apuntar lanzamiento | Ratón | Joystick |
+| Batear · modo poder · toque | Clic izq · Espacio · E | BATEAR · PODER · TOQUE |
+| Lanzar | 1-4 o clic der eligen lanzamiento; clic empieza y suelta el aro | RECTA / CURVA / SLIDER / CAMBIO (tocar otra vez para soltar) |
 | Mover al defensor | WASD | Joystick |
-| Tirar a una base | Apuntar con el ratón + clic, o 1 2 3 4 | Inclinar el joystick hacia la base + LANZAR |
-| Saltar / lanzarse en plancha | Espacio / Clic der | SALTO / PLANCHA |
-| Corredores: avanzar / volver | Clic o Espacio / E o Clic der | CORRER / VOLVER |
+| Tirar a una base | 1 2 3 4, rombo o apuntar con el ratón + clic | Rombo de bases |
+| Saltar · lanzarse en plancha | Espacio · Clic der | SALTO · PLANCHA |
+| Corredores | Clic / Espacio = todos corren · E = todos vuelven · 1-4 = uno | CORRER / VOLVER · rombo |
+| Robar base | 2 3 4 o rombo antes del lanzamiento | Rombo antes del lanzamiento |
 | Pausa · pantalla completa · sonido | Esc · F · M | Botones ⛶ y II |
-
-Si no mueves a tu defensor, corre solo hacia la pelota.
 
 ## Archivos
 
 - `index.html`: pantallas, HUD y estilos.
-- `game.js`: todo el juego (render, personajes, física, reglas, IA, controles y sonido sintetizado). Usa three.js desde jsDelivr; no hay que instalar nada.
+- `game.js`: todo el juego (render, personajes, física, reglas, IA, controles, modo en línea y sonido sintetizado). Usa three.js desde jsDelivr y PeerJS (con relevo MQTT de respaldo) para jugar en línea; no hay que instalar nada.
 
 Para probarlo en local hace falta un servidor (los módulos ES no cargan con `file://`), por ejemplo:
 
 ```bash
 npx http-server .
 ```
+
+Con `?touch=1` en la URL se fuerza la interfaz táctil para probarla en el PC.
