@@ -84,6 +84,89 @@ input.txt:focus{border-color:var(--blue)}
 .pl em{font-style:normal;opacity:.55;font-size:13px}
 #lStatus,#jStatus{text-align:center;margin:8px 0;min-height:22px;opacity:.8}
 #netInfo{position:absolute;top:max(18px,env(safe-area-inset-top));left:14px;background:rgba(29,35,64,.55);color:#fff;border-radius:12px;padding:4px 10px;font-size:13px;display:none}
+/* menú en 3 columnas */
+.mgrid.g3{grid-template-columns:1fr 1fr 1fr;gap:0 8px}
+.mgrid.g3 .btn{font-size:15px;padding:11px 4px}
+.btn.gold{background:#ffb21e;box-shadow:0 6px 0 #c9851c}.btn.gold:active{box-shadow:0 2px 0 #c9851c}
+.btn.purple{background:#a24bff;box-shadow:0 6px 0 #7230c2}.btn.purple:active{box-shadow:0 2px 0 #7230c2}
+#helpBadge:empty,#goalBadge:empty{display:none}
+/* retos, logros y copa */
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tab{flex:1;border:0;border-radius:12px;padding:9px 6px;font-weight:600;font-size:14px;background:#eef1fa;color:var(--ink);cursor:pointer}
+.tab.sel{background:var(--blue);color:#fff}
+.goal{display:flex;align-items:center;gap:10px;background:#f5f7fd;border-radius:14px;padding:10px;margin:6px 0}
+.goal.done{background:#e3f9ee}
+.gico{font-size:28px;width:40px;text-align:center}
+.ginfo{flex:1}.ginfo b{display:block;font-size:15px}.ginfo small{opacity:.6}
+.abar{display:block;height:8px;border-radius:6px;background:#e1e6f3;overflow:hidden;margin:5px 0 2px}.abar i{display:block;height:100%}
+.gxp{font-weight:700;color:#3a7bff;white-space:nowrap}
+.achGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.ach{background:#f1f3f8;border-radius:14px;padding:10px;text-align:center;opacity:.55}
+.ach.got{background:#fff6d6;opacity:1}
+.ach .aico{font-size:28px}.ach b{display:block;font-size:14px}.ach small{font-size:11px;opacity:.7}
+.bracket{display:flex;gap:8px;overflow-x:auto;margin-bottom:8px;padding-bottom:4px}
+.bcol{flex:1;min-width:112px;display:flex;flex-direction:column;gap:6px}
+.bms{flex:1;display:flex;flex-direction:column;justify-content:space-around;gap:6px}
+.bhead{font-size:12px;font-weight:700;text-transform:uppercase;opacity:.6;text-align:center}
+.bmatch{background:#f5f7fd;border-radius:10px;padding:4px 6px}
+.bmatch.champ{background:#fff6d6;font-weight:700;text-align:center;padding:10px 6px}
+.bteam{font-size:12px;padding:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:4px solid var(--tc);padding-left:5px;margin:2px 0}
+.bteam.tbd{--tc:#d5dbe9;opacity:.45;text-align:center}
+.bteam.me{color:var(--blue);font-weight:700}.bteam.win{font-weight:700}.bteam.lose{opacity:.4;text-decoration:line-through}
+/* repeticiones */
+#lbTop,#lbBot{position:fixed;left:0;right:0;height:0;background:#000;z-index:30;transition:height .35s;pointer-events:none}
+#lbTop{top:0}#lbBot{bottom:0}
+body.replay #lbTop,body.replay #lbBot{height:9vh}
+#rpBadge{position:fixed;left:16px;top:calc(9vh + 12px);z-index:31;color:#fff;font-weight:700;font-size:18px;text-shadow:0 2px 6px rgba(0,0,0,.6);display:none;cursor:pointer}
+#rpBadge .rec{color:#ff3b3b;animation:blink 1s infinite}
+#rpBadge b{display:block;font-size:26px;color:#ffe14d}
+#rpBadge small{display:block;font-size:12px;opacity:.75;font-weight:600}
+@keyframes blink{50%{opacity:.2}}
+body.replay #rpBadge{display:block}
+body.replay #hud,body.replay #touchUI,body.replay #bd,body.replay #tags{display:none!important}
+/* tutorial */
+#tut{position:fixed;top:max(10px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(560px,calc(100vw - 140px));background:rgba(255,255,255,.95);border-radius:20px;padding:12px 16px;z-index:15;display:none;box-shadow:0 6px 0 rgba(29,35,64,.15),0 18px 40px rgba(29,35,64,.2)}
+body.tutOn #tut{display:block}
+body.tutOn #score,body.tutOn #ctrlCard,body.tutOn #hint{display:none}
+.tutHead{display:flex;align-items:center;gap:10px;font-size:19px}
+#tutStep{background:#ffc93a;border-radius:10px;padding:2px 10px;font-weight:700;font-size:15px}
+#tutText{margin:6px 0;font-size:15px;line-height:1.4}
+#tutText b{background:#eef1fa;border-radius:6px;padding:0 5px}
+#tutDots{display:flex;gap:6px;margin:4px 0}
+#tutDots i{width:16px;height:16px;border-radius:50%;background:#e5e9f5;transition:background .2s,transform .2s}
+#tutDots i.on{background:#2fd27a;transform:scale(1.15)}
+#tutMsg{font-weight:600;min-height:20px;font-size:15px}
+#tutMsg.good{color:#1c9554}#tutMsg.bad{color:#c26a00}
+#tutBtns,#tutEnd{display:flex;gap:8px;margin-top:6px}
+#tutBtns button,#tutEnd button{flex:1}
+@media (max-width:760px){#tut{left:10px;right:66px;transform:none;width:auto;padding:8px 12px}#tutText{font-size:13px}.tutHead{font-size:16px}}
+@media (max-height:430px){#tut{padding:6px 10px}#tutText{font-size:12px;margin:3px 0}#tutDots i{width:11px;height:11px}#tutBtns .btn{padding:5px 8px;font-size:13px}}
+/* energía del lanzador */
+#staBox{position:absolute;right:max(14px,env(safe-area-inset-right));top:calc(max(14px,env(safe-area-inset-top)) + 58px);width:170px;background:rgba(29,35,64,.78);color:#fff;border-radius:14px;padding:7px 10px;display:none;pointer-events:auto;box-shadow:0 4px 0 rgba(0,0,0,.15)}
+#staBox.on{display:block}
+.staTop{display:flex;justify-content:space-between;font-size:13px;gap:6px}.staTop b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sbar{height:8px;border-radius:5px;background:rgba(255,255,255,.2);overflow:hidden;margin:4px 0 6px}
+.sbar i{display:block;height:100%;width:100%;background:#2fd27a;transition:width .3s}
+#bRelief{width:100%;border:0;border-radius:10px;padding:6px;font:700 13px Fredoka,system-ui;background:#ffc93a;color:var(--ink);cursor:pointer}
+#bRelief:disabled{opacity:.4}
+@media (max-width:760px){#staBox{top:calc(max(14px,env(safe-area-inset-top)) + 100px);width:140px}}
+/* teléfono en vertical: el marcador va a la izquierda para dejar sitio a los botones de pausa y pantalla completa */
+@media (max-width:480px){
+ #hud #score{left:max(8px,env(safe-area-inset-left));transform:none;gap:6px}
+ #score .pill{min-width:50px;height:46px;font-size:25px}
+ #score #mid{padding:4px 7px;gap:6px}
+ body.touch #hud #hint{top:calc(max(10px,env(safe-area-inset-top)) + 112px);font-size:13px}
+ #hud #staBox{top:calc(max(14px,env(safe-area-inset-top)) + 150px);width:132px}
+ body #bd{top:calc(max(10px,env(safe-area-inset-top)) + 150px)}
+}
+/* equipos */
+.tpick{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:6px}
+.tcard{position:relative;border:3px solid #dfe5f5;background:#fff;border-radius:14px;padding:6px 4px 5px;font-family:inherit;color:var(--ink);cursor:pointer;text-align:center;line-height:1.15}
+.tcard .tb2{display:grid;place-items:center;width:34px;height:34px;margin:0 auto 2px;border-radius:50%;background:var(--tc);font-size:19px;box-shadow:0 3px 0 rgba(0,0,0,.15)}
+.tcard b{display:block;font-size:13px}.tcard small{display:block;font-size:10px;opacity:.65}
+.tcard i{position:absolute;top:3px;right:5px;font-style:normal;font-weight:700;font-size:11px;background:#1d2340;color:#fff;border-radius:7px;padding:0 5px}
+.tcard.sel{border-color:var(--tc);background:#f6f8ff;box-shadow:0 0 0 2px var(--tc)}
+.tcard.lock{opacity:.35}
 /* rombo de bases */
 #bd{position:fixed;left:max(10px,env(safe-area-inset-left));top:calc(max(10px,env(safe-area-inset-top)) + 70px);width:152px;height:170px;z-index:13;display:none;pointer-events:none}
 #bd.on{display:block}
@@ -236,6 +319,7 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
   <div id="banner"></div>
   <div id="hint"></div>
   <div id="ctrlCard"></div>
+  <div id="staBox"><div class="staTop"><b id="staName">Lanzador</b><span id="staPct">100%</span></div><div class="sbar"><i id="staBar"></i></div><button id="bRelief">🔄 Relevo</button></div>
   <button id="fsBtn" title="Pantalla completa (F)">⛶</button>
   <button id="pauseBtn" title="Pausa (Esc)">II</button>
 </div>
@@ -261,14 +345,16 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
         <div class="pinfo"><b id="mName">Jugador</b><div class="xpbar"><i id="mXp"></i></div><small id="mXpTxt"></small></div>
       </div>
       <button class="btn green" data-go="scrSetup">⚾ Jugar contra la PC</button>
-      <div class="mgrid">
+      <div class="mgrid g3">
+        <button class="btn gold" id="bCup">🏆 Copa</button>
+        <button class="btn orange" id="bDerby">💥 Derby</button>
+        <button class="btn teal" id="bTut">📘 Tutorial<span class="badge" id="tutBadge">¡Empieza aquí!</span></button>
         <button class="btn" id="bHost">🌐 Crear sala</button>
         <button class="btn pink" data-go="scrJoin">🔗 Unirme</button>
-        <button class="btn orange" id="bDerby">💥 Derby de jonrones</button>
-        <button class="btn teal" data-go="scrHelp">📘 Cómo se juega<span class="badge" id="helpBadge">¡Léeme!</span></button>
+        <button class="btn purple" id="bGoals">🎯 Retos<span class="badge" id="goalBadge"></span></button>
       </div>
       <button class="btn yellow" data-go="scrCustom">🎨 Personalizar jugador</button>
-      <div class="mini"><span id="mStats"></span><span><button class="link" id="bFs" title="Pantalla completa (F)">⛶</button><button class="link" id="bMute" title="Sonido">🔊</button></span></div>
+      <div class="mini"><span id="mStats"></span><span><button class="link" data-go="scrHelp" title="Cómo se juega">📖<span id="helpBadge"></span></button><button class="link" id="bFs" title="Pantalla completa (F)">⛶</button><button class="link" id="bMute" title="Sonido">🔊</button></span></div>
     </div>
   </div>
 </section>
@@ -276,6 +362,10 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
 <section class="screen dim" id="scrSetup">
   <div class="panel">
     <h2>Partido contra la PC</h2>
+    <label class="t">Tu equipo</label>
+    <div class="tpick" id="sMyTeam"></div>
+    <label class="t">Rival</label>
+    <div class="tpick" id="sRival"></div>
     <label class="t">Entradas</label>
     <div class="row" data-opt="innings"><button class="chip" data-v="1">1</button><button class="chip" data-v="2">2</button><button class="chip" data-v="3">3</button><button class="chip" data-v="5">5</button></div>
     <label class="t">Dificultad</label>
@@ -299,7 +389,7 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
 <section class="screen dim" id="scrHelp">
   <div class="panel wide help">
     <h2>📘 Cómo se juega</h2>
-    <p>Contra la PC eres los <b style="color:#1c9554">Verdes</b> y bateas primero. Cada equipo batea hasta que le hacen <b>3 outs</b>; luego se cambian. Gana quien tenga más carreras al final de las entradas. Una entrada se corta a las <b>6 carreras</b>. En <b>🌐 Crear sala</b> juegas contra un amigo: tú con los Verdes y él con los Rosas.</p>
+    <p>Elige tu <b>equipo</b> y el rival: cada uno tiene su estilo (poder, contacto, velocidad, defensa, pitcheo…) y su media. Tu equipo batea primero. Cada equipo batea hasta que le hacen <b>3 outs</b>; luego se cambian. Gana quien tenga más carreras al final de las entradas. Una entrada se corta a las <b>6 carreras</b>. En <b>🌐 Crear sala</b> juegas contra un amigo y cada uno elige su equipo en la sala. ¿Primera vez? Prueba el <b>📘 Tutorial</b>: cinco lecciones cortas que se completan jugando.</p>
     <div class="cols">
       <div class="box">
         <h3>💻 En PC</h3>
@@ -311,6 +401,7 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
           <b>Clic der</b><span>Cambiar lanzamiento · lanzarte en plancha</span>
           <b>1 2 3 4</b><span>El rombo: tirar a esa base, mandar a un corredor, robar o elegir lanzamiento</span>
           <b>WASD</b><span>Mover al jugador que defiende</span>
+          <b>R</b><span>Cambiar de lanzador (relevo)</span>
           <b>Esc · F · M</b><span>Pausa · pantalla completa · sonido</span>
         </div>
       </div>
@@ -330,6 +421,10 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
     <p>Tus corredores corren solos lo que es seguro. <b>CORRER</b> / <b>VOLVER</b> mueven a todos; tocando una base del rombo mandas o regresas a uno solo. Antes del lanzamiento, toca la base siguiente a un corredor para <b>robarla</b>: sale con el movimiento del lanzador.</p>
     <h3>🧤 Lanzando y defendiendo</h3>
     <p>Apunta en la zona (o fuera, para engañar), elige <b>recta</b> (rápida), <b>curva</b> (cae mucho), <b>slider</b> (se va de lado) o <b>cambio</b> (lenta) y suelta cuando el <b>aro</b> se cierre en el círculo verde: cuanto más justo, más preciso y rápido. Cuando le pegan, controlas al jugador más cerca de la pelota; si no lo mueves, corre solo. Toca una base del rombo para tirar ahí, incluso antes de atrapar.</p>
+    <h3>🔋 Cansancio y relevos</h3>
+    <p>Cada lanzamiento cansa a tu lanzador: la barra de arriba a la derecha baja y, cuanto más cansado, más lentos y menos precisos son sus lanzamientos. Antes de lanzar puedes pedir un <b>🔄 Relevo</b>: entra uno de tus dos relevistas descansado (ocupa también su turno al bate). La PC también cambia de lanzador cuando se cansa.</p>
+    <h3>🏆 Copa, retos y logros</h3>
+    <p>En la <b>Copa</b> juegas cuartos, semifinal y final contra equipos distintos (la final es más difícil). Cada día hay <b>3 retos</b> nuevos que dan XP, y hay <b>16 logros</b> para coleccionar. Tras un jonrón o una gran jugada verás la <b>repetición</b> (toca para saltarla; se puede quitar en la pausa, igual que el narrador).</p>
     <button class="btn green" data-go="scrMenu">¡Entendido!</button>
   </div>
 </section>
@@ -341,6 +436,26 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
     <input class="txt" id="cName" maxlength="12" autocomplete="off">
     <div id="custRows"></div>
     <button class="btn green" data-go="scrMenu" style="margin-top:16px">Listo</button>
+  </div>
+</section>
+
+<section class="screen dim" id="scrCup">
+  <div class="panel wide">
+    <h2>🏆 Copa</h2>
+    <p class="tipSmall">Ocho equipos, eliminación directa. Gana cuartos, semifinal y final para levantar la Copa.</p>
+    <div id="cupBody"></div>
+    <button class="btn green" id="bCupPlay">▶ Jugar</button>
+    <button class="btn" id="bCupNew">🏆 Nueva Copa</button>
+    <button class="btn gray" data-go="scrMenu">Volver</button>
+  </div>
+</section>
+
+<section class="screen dim" id="scrGoals">
+  <div class="panel wide">
+    <h2>🎯 Retos y logros</h2>
+    <div class="tabs" id="goalTabs"><button class="tab sel" data-gt="daily">🎯 Retos de hoy</button><button class="tab" data-gt="ach">🏅 Logros</button></div>
+    <div id="goalsBody"></div>
+    <button class="btn gray" data-go="scrMenu">Volver</button>
   </div>
 </section>
 
@@ -362,9 +477,11 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
     <div class="share"><input class="txt" id="lLink" readonly><button class="btn small" id="bCopy">Copiar link</button></div>
     <div class="qrRow" id="qrRow"><div id="lQr"></div><div class="qrTip">📱 <b>Escanea este código con la cámara del teléfono</b> para entrar a la sala. Funciona con WiFi o con datos. Deja esta pestaña abierta mientras juegan.</div></div>
     <div class="teams">
-      <div class="tcol a"><h3>🟢 Verdes · anfitrión</h3><div id="lTeam0"></div></div>
-      <div class="tcol b"><h3>🩷 Rosas · invitado</h3><div id="lTeam1"></div></div>
+      <div class="tcol a"><h3 id="lTeamH0">Verdes · anfitrión</h3><div id="lTeam0"></div></div>
+      <div class="tcol b"><h3 id="lTeamH1">Rosas · invitado</h3><div id="lTeam1"></div></div>
     </div>
+    <label class="t">Tu equipo</label>
+    <div class="tpick" id="lMyTeam"></div>
     <div id="lHostOpts">
       <label class="t">Entradas</label>
       <div class="row" data-lopt="innings"><button class="chip" data-v="1">1</button><button class="chip" data-v="2">2</button><button class="chip" data-v="3">3</button><button class="chip" data-v="5">5</button></div>
@@ -388,6 +505,8 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
     <button class="btn" id="bBatMode">⚾ Bateo: Con cursor</button>
     <button class="btn" id="bThrowMode">🧤 Tiros en defensa: Manuales</button>
     <button class="btn" id="bHelpTog">🎯 Ayuda al batear: Sí</button>
+    <button class="btn" id="bVoice">🎙️ Narrador: Sí</button>
+    <button class="btn" id="bReplays">🎬 Repeticiones: Sí</button>
     <button class="btn" id="bVib">📳 Vibración: Sí</button>
     <button class="btn gray" id="bQuit">Salir al menú</button>
   </div>
@@ -411,8 +530,20 @@ table.line td.tot{font-weight:700;background:#f1f3f8}
   </div>
 </section>
 
+<div id="lbTop"></div><div id="lbBot"></div>
+<div id="rpBadge"><span class="rec">●</span> REPETICIÓN <b id="rpTitle"></b><small>toca para saltar</small></div>
+
+<div id="tut">
+  <div class="tutHead"><span id="tutStep">1/5</span><b id="tutTitle">Tutorial</b></div>
+  <div id="tutText"></div>
+  <div id="tutDots"></div>
+  <div id="tutMsg"></div>
+  <div id="tutBtns"><button class="btn small gray" id="tutSkip">Saltar lección ⏭</button><button class="btn small gray" id="tutExit">Salir</button></div>
+  <div id="tutEnd" style="display:none"><button class="btn small green" id="tutPlay">Jugar contra la PC</button><button class="btn small" id="tutMenu">Menú</button></div>
+</div>
+
 <div id="toast"></div>
 <div id="fade"></div>
-<script type="module" src="game.js"></script>
+<script type="module" src="game.js?v=3"></script>
 </body>
 </html>

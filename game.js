@@ -83,13 +83,81 @@ const OPTS = {
   cel: [['punos', 'Puños', 1], ['salto', 'Salto', 1], ['aplauso', 'Aplausos', 2], ['baile', 'Baile', 4], ['voltereta', 'Voltereta', 7], ['campeon', 'Campeón', 10]].map(([v, n, lv]) => ({ v, n, lv })),
 };
 const OPT_LABEL = { skin: 'Piel', hair: 'Peinado', hairColor: 'Color de pelo', acc: 'Accesorio', bat: 'Bate', glove: 'Guante', cel: 'Celebración' };
-function randomLook() {
+function randomLook(rng = Math.random) {
+  const pk = (a) => a[Math.floor(rng() * a.length)];
   return {
-    skin: pick(OPTS.skin).v, hair: pick(OPTS.hair).v, hairColor: pick(OPTS.hairColor).v,
-    acc: Math.random() < 0.6 ? 'none' : pick(OPTS.acc.slice(1, 5)).v,
-    bat: pick(OPTS.bat.slice(0, 4)).v, glove: pick(OPTS.glove.slice(0, 3)).v, cel: pick(['punos', 'salto', 'aplauso']),
+    skin: pk(OPTS.skin).v, hair: pk(OPTS.hair).v, hairColor: pk(OPTS.hairColor).v,
+    acc: rng() < 0.6 ? 'none' : pk(OPTS.acc.slice(1, 5)).v,
+    bat: pk(OPTS.bat.slice(0, 4)).v, glove: pk(OPTS.glove.slice(0, 3)).v, cel: pk(['punos', 'salto', 'aplauso']),
   };
 }
+// azar con semilla: los dos dispositivos de una partida en línea generan las mismas plantillas
+function mulberry32(a) {
+  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+
+// ---------- equipos (cada uno con su estilo y sus jugadores) ----------
+// valoraciones 40-99: pow poder, con contacto, spd velocidad, def defensa, arm brazo, pit pitcheo
+const TEAMS = [
+  { id: 'verdes', name: 'Verdes', full: 'Verdes del Parque', col: '#2fd27a', dark: '#178a4c', badge: '🌿', style: 'Equilibrado', r: { pow: 72, con: 74, spd: 72, def: 72, arm: 72, pit: 72 } },
+  { id: 'rosas', name: 'Rosas', full: 'Rosas del Malecón', col: '#ff4f9a', dark: '#b8286a', badge: '🌸', style: 'Contacto', r: { pow: 66, con: 82, spd: 74, def: 72, arm: 68, pit: 72 } },
+  { id: 'tiburones', name: 'Tiburones', full: 'Tiburones de la Bahía', col: '#1e88e5', dark: '#0d5aa7', badge: '🦈', style: 'Poder', r: { pow: 84, con: 68, spd: 66, def: 70, arm: 76, pit: 72 } },
+  { id: 'leones', name: 'Leones', full: 'Leones de la Sierra', col: '#f9a825', dark: '#a87100', badge: '🦁', style: 'Mucho poder', r: { pow: 90, con: 64, spd: 62, def: 66, arm: 74, pit: 70 } },
+  { id: 'halcones', name: 'Halcones', full: 'Halcones del Valle', col: '#e53935', dark: '#a11c1a', badge: '🦅', style: 'Velocidad', r: { pow: 64, con: 76, spd: 90, def: 76, arm: 70, pit: 68 } },
+  { id: 'piratas', name: 'Piratas', full: 'Piratas del Puerto', col: '#455a64', dark: '#1f2b31', badge: '🏴‍☠️', style: 'Pitcheo', r: { pow: 68, con: 70, spd: 70, def: 74, arm: 72, pit: 90 } },
+  { id: 'cocodrilos', name: 'Cocodrilos', full: 'Cocodrilos del Río', col: '#00897b', dark: '#005b52', badge: '🐊', style: 'Defensa', r: { pow: 70, con: 72, spd: 70, def: 90, arm: 80, pit: 74 } },
+  { id: 'huracanes', name: 'Huracanes', full: 'Huracanes del Caribe', col: '#7e57c2', dark: '#4d2c91', badge: '🌀', style: 'Brazo y piernas', r: { pow: 74, con: 70, spd: 82, def: 74, arm: 88, pit: 70 } },
+  { id: 'cometas', name: 'Cometas', full: 'Cometas de la Costa', col: '#ff7a2f', dark: '#c2541a', badge: '☄️', style: 'Bateo', r: { pow: 80, con: 84, spd: 68, def: 64, arm: 66, pit: 66 } },
+];
+const TEAM_BY_ID = Object.fromEntries(TEAMS.map((t) => [t.id, t]));
+const teamOf = (id) => TEAM_BY_ID[id] || TEAMS[0];
+const teamOvr = (t) => Math.round((t.r.pow + t.r.con + t.r.spd + t.r.def + t.r.arm + t.r.pit * 1.5) / 6.5);
+// énfasis por posición: [pow, con, spd, def, arm]
+const ROLE_W = { P: [-14, -12, -6, 0, 6], C: [2, -4, -12, 4, 10], '1B': [10, 0, -8, -2, -4], '2B': [-8, 6, 6, 6, -2], SS: [-6, 2, 8, 10, 6], '3B': [6, -2, -4, 2, 8], LF: [6, 0, 2, -2, -2], CF: [-2, 4, 10, 6, 4], RF: [6, -2, 0, 0, 8] };
+const ROSTER_CACHE = {};
+// plantilla fija de un equipo: 9 titulares + 2 relevistas (nombres, aspecto y valoraciones)
+function teamRoster(id) {
+  if (ROSTER_CACHE[id]) return ROSTER_CACHE[id];
+  const T = teamOf(id), rng = mulberry32(hashStr('jp-' + T.id));
+  const used = new Set(), names = CPU_NAMES.slice();
+  const nm = () => { let n; let k = 0; do { n = names[Math.floor(rng() * names.length)]; k++; } while (used.has(n) && k < 60); used.add(n); return n; };
+  const v = (base, w) => clamp(Math.round(base + w + (rng() - 0.5) * 14), 40, 99);
+  const out = [];
+  for (let i = 0; i < 11; i++) {
+    const role = i < 9 ? ROLES[i] : 'RP';
+    const w = ROLE_W[role === 'RP' ? 'P' : role];
+    const pitcher = role === 'P' || role === 'RP';
+    out.push({
+      name: nm(), look: randomLook(rng), role,
+      r: {
+        pow: v(T.r.pow, w[0]), con: v(T.r.con, w[1]), spd: v(T.r.spd, w[2]), def: v(T.r.def, w[3]), arm: v(T.r.arm, w[4]),
+        vel: pitcher ? v(T.r.pit, i === 0 ? 4 : -2) : 50, ctl: pitcher ? v(T.r.pit, i === 0 ? 2 : 0) : 50, sta: pitcher ? v(T.r.pit, i === 0 ? 6 : -10) : 50,
+      },
+    });
+  }
+  ROSTER_CACHE[id] = out;
+  return out;
+}
+// de valoración (40-99) a multiplicador
+const mulOf = (val, lo, hi) => lo + (hi - lo) * clamp((val - 40) / 55, 0, 1);
+const playerOvr = (r, role) => Math.round(role === 'P' || role === 'RP' ? (r.vel + r.ctl + r.sta) / 3 : (r.pow + r.con + r.spd + r.def + r.arm) / 5);
+function demoTeams() { const a = pick(TEAMS).id; let b; do { b = pick(TEAMS).id; } while (b === a); return [a, b]; }
+const hexRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const colorDist = (a, b) => { const A = hexRgb(a), B = hexRgb(b); return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); };
+// colores y nombres del partido; si los dos uniformes se parecen, el visitante (local en el campo: índice 1) va de blanco
+function applyTeamColors(ids) {
+  const A = teamOf(ids[0]), B = teamOf(ids[1]);
+  let cb = B.col, db = B.dark;
+  if (colorDist(A.col, B.col) < 120) { cb = '#f1f3f8'; db = B.col; }
+  TEAM_CSS[0] = A.col; TEAM_CSS[1] = cb; TEAM_DARK[0] = A.dark; TEAM_DARK[1] = db;
+  TEAM_HEX[0] = parseInt(A.col.slice(1), 16); TEAM_HEX[1] = parseInt((cb === '#f1f3f8' ? B.col : cb).slice(1), 16);
+  TEAM_NAME[0] = A.name; TEAM_NAME[1] = B.name;
+  for (let t = 0; t < 2; t++) if (DUGOUT_MATS[t]) DUGOUT_MATS[t].color.set(t ? TEAM_HEX[1] : TEAM_HEX[0]);
+  const pills = [document.getElementById('pA'), document.getElementById('pB')];
+  pills.forEach((el, t) => { if (!el) return; el.style.background = t ? '#' + TEAM_HEX[1].toString(16).padStart(6, '0') : TEAM_CSS[0]; const s = el.querySelector('small'); if (s) s.textContent = TEAM_NAME[t].toUpperCase(); });
+}
+const DUGOUT_MATS = [null, null];
 
 // ---------- guardado ----------
 const SAVE_KEY = 'jonronpark_v1';
@@ -97,7 +165,7 @@ function defaultSave() {
   return {
     name: 'Jugador' + randi(10, 99),
     look: { skin: '#f3c48e', hair: 'spiky', hairColor: '#2b1d14', acc: 'none', bat: '#c8955a', glove: '#8a5a36', cel: 'punos' },
-    xp: 0, level: 1, wins: 0, games: 0, streak: 0, best: 0, innings: 3, diff: 1, venue: 'parque', help: 1, batMode: 'cursor', throwMode: 'manual',
+    xp: 0, level: 1, wins: 0, games: 0, streak: 0, best: 0, innings: 3, diff: 1, venue: 'parque', help: 1, batMode: 'cursor', throwMode: 'manual', team: 'verdes', rival: 'rosas',
     muted: false, derbyBest: 0, derbyLong: 0, hrTotal: 0, quality: 'auto', tags: 'auto', vib: true, seenHelp: false,
   };
 }
@@ -153,10 +221,25 @@ const SFX = (() => {
     s.connect(f).connect(g).connect(master);
     s.start(t, Math.random()); s.stop(t + dur + attack + 0.05);
   }
+  let crowdG = null;
   return {
     resume() { init(); if (ctx && ctx.state === 'suspended') ctx.resume(); },
     get muted() { return muted; },
-    set muted(v) { muted = v; },
+    set muted(v) { muted = v; if (crowdG && ctx) crowdG.gain.setTargetAtTime(0, ctx.currentTime, 0.2); },
+    // murmullo continuo del público (ruido filtrado en bucle); crowd(nivel) lo sube o lo baja suave
+    crowd(level) {
+      if (!ctx) return;
+      if (!crowdG) {
+        const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+        const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 950; f.Q.value = 0.6;
+        const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 2400;
+        crowdG = ctx.createGain(); crowdG.gain.value = 0;
+        s.connect(f).connect(f2).connect(crowdG).connect(master); s.start();
+      }
+      crowdG.gain.setTargetAtTime(muted ? 0 : level, ctx.currentTime, 0.35);
+    },
+    claps() { for (let i = 0; i < 3; i++) { noise(0.05, 0.22, 'highpass', 2000, 0.7, i * 0.3); noise(0.05, 0.14, 'highpass', 2600, 0.7, i * 0.3 + 0.04); } },
+    groan() { noise(0.9, 0.16, 'lowpass', 520, 0.6, 0, 0.12); tone(200, 0.7, 'sawtooth', 0.025, 120); },
     crack(p = 0.7) { noise(0.05, 0.9, 'highpass', 4000 + p * 1400, 0.8); tone(1500 + p * 500, 0.05, 'square', 0.08, 500); tone(170, 0.13, 'sine', 0.45 + p * 0.3, 60); noise(0.14, 0.3 * p, 'bandpass', 900, 1.5, 0.01); },
     foul() { noise(0.04, 0.5, 'highpass', 3000); tone(700, 0.05, 'triangle', 0.12, 300); },
     pop() { tone(240, 0.07, 'sine', 0.5, 110); noise(0.05, 0.55, 'bandpass', 1300, 1.4); },
@@ -182,6 +265,30 @@ const SFX = (() => {
   };
 })();
 SFX.muted = !!SAVE.muted;
+
+// ---------- narrador (voz del navegador en español) ----------
+const VOICE = { ok: typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance !== 'undefined', v: null, last: 0 };
+function pickVoice() {
+  if (!VOICE.ok) return;
+  const vs = speechSynthesis.getVoices() || [];
+  VOICE.v = vs.find((v) => /^es[-_](419|MX|US|CO|AR|CU|VE|CL|PE)/i.test(v.lang)) || vs.find((v) => /^es/i.test(v.lang)) || null;
+}
+if (VOICE.ok) { pickVoice(); try { speechSynthesis.onvoiceschanged = pickVoice; } catch (e) { /* sin evento */ } }
+// prio 0: solo si está callado · 1: normal · 2: corta lo que esté diciendo
+function say(lines, prio = 1) {
+  if (!VOICE.ok || SAVE.voice === false || SFX.muted) return;
+  const now = performance.now();
+  try {
+    if (prio < 2 && (speechSynthesis.speaking || now - VOICE.last < (prio ? 900 : 2500))) return;
+    if (prio >= 2) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(Array.isArray(lines) ? pick(lines) : lines);
+    u.lang = VOICE.v ? VOICE.v.lang : 'es-ES';
+    if (VOICE.v) u.voice = VOICE.v;
+    u.rate = 1.12; u.pitch = 1.05; u.volume = 0.95;
+    speechSynthesis.speak(u);
+    VOICE.last = now;
+  } catch (e) { /* sin voz */ }
+}
 
 // =========================================================
 //  RENDER Y MUNDO
@@ -517,7 +624,8 @@ function buildPark(g, v) {
     const cx = n.x * o + u.x * along, cz = n.z * o + u.z * along, ry = Math.atan2(-u.z, u.x);
     const grp = new THREE.Group(); grp.position.set(cx, 0, cz); grp.rotation.y = ry; g.add(grp);
     const back = mesh(BOX_GEO, toon('#3a3f4e')); back.scale.set(7, 2.2, 0.3); back.position.set(0, 1.1, sx < 0 ? -0.9 : 0.9); grp.add(back);
-    const roof = outline(mesh(BOX_GEO, toon(TEAM_CSS[team]))); roof.scale.set(7.4, 0.25, 2.2); roof.position.set(0, 2.3, 0); grp.add(roof);
+    DUGOUT_MATS[team] = new THREE.MeshToonMaterial({ color: TEAM_HEX[team], gradientMap: toonGrad });
+    const roof = outline(mesh(BOX_GEO, DUGOUT_MATS[team])); roof.scale.set(7.4, 0.25, 2.2); roof.position.set(0, 2.3, 0); grp.add(roof);
     const bench = mesh(BOX_GEO, toon('#c8955a')); bench.scale.set(6, 0.45, 0.5); bench.position.set(0, 0.22, sx < 0 ? -0.5 : 0.5); grp.add(bench);
     for (const e of [-1, 1]) { const w = mesh(BOX_GEO, toon('#3a3f4e')); w.scale.set(0.25, 2.2, 2.0); w.position.set(e * 3.55, 1.1, 0); grp.add(w); }
   }
@@ -1638,21 +1746,27 @@ function cpuName(used) {
   used.add(n);
   return n;
 }
-function makePlayer(id, team, name, look, cpu, role) {
+function makePlayer(id, team, name, look, cpu, role, r) {
+  r = r || { pow: 70, con: 70, spd: 70, def: 70, arm: 70, vel: 70, ctl: 70, sta: 70 };
   return {
     id, team, name, look, cpu, role, x: 0, y: 0, z: 0, vx: 0, vz: 0, vy: 0, ry: 0, anim: 'idle', animT: 0,
     hx: 0, hz: 0, goalX: 0, goalZ: 0, goalSp: 0, manual: false, mx: 0, mz: 0, snap: true,
     diveT: 0, lieT: 0, throwT: 0, throwBase: 0, throwRy: 0, plan: null, replanAt: 0, canThrowAt: 0, holdT0: 0,
-    spd: rand(0.94, 1.06), arm: rand(0.92, 1.08), pow: rand(0.92, 1.08),
-    stats: { ab: 0, h: 0, hr: 0, rbi: 0, r: 0, k: 0, bb: 0, pk: 0 },
+    r, ovr: playerOvr(r, role),
+    // multiplicadores que usa la simulación
+    spd: mulOf(r.spd, 0.9, 1.1) * mulOf(r.def, 0.97, 1.03), arm: mulOf(r.arm, 0.86, 1.12), pow: mulOf(r.pow, 0.87, 1.13), con: mulOf(r.con, 0.86, 1.14),
+    vel: mulOf(r.vel, 0.93, 1.06), ctl: mulOf(r.ctl, 0, 1), sta: mulOf(r.sta, 0.75, 1.3), stam: 100,
+    stats: { ab: 0, h: 0, hr: 0, rbi: 0, r: 0, k: 0, bb: 0, pk: 0, sb: 0 },
   };
 }
 function makeRunner(pl, base, isBatter) {
   const cpuK = !tH(pl.team) && S.ctl.some(Boolean) ? [0.93, 1, 1.04][S.settings.diff] || 1 : 1;
   return { pl, p: base, base, base0: base, target: base, forced: -1, fdone: true, isBatter: !!isBatter, out: false, scored: false, manual: false, stay: false, startT: 0, decideAt: 0, speed: RUN_V * pl.spd * cpuK, slideT: 0, scoreT: 0, steal: false };
 }
-// opts: { settings, demo, derby, online, ctl: [bool, bool], remote: [bool, bool], me, captains: [{name, look} | null, …], throwMode: [..] }
+// opts: { settings, demo, derby, online, ctl: [bool, bool], remote: [bool, bool], me, captains: [{name, look} | null, …], teams: [id, id], throwMode: [..] }
 function newGame(opts) {
+  const teamIds = opts.teams || (opts.demo ? demoTeams() : [SAVE.team || 'verdes', SAVE.rival && SAVE.rival !== (SAVE.team || 'verdes') ? SAVE.rival : 'rosas']);
+  applyTeamColors(teamIds);
   const set = opts.settings;
   const ctl = opts.ctl || (opts.demo ? [false, false] : [true, false]);
   Object.assign(S, {
@@ -1662,20 +1776,26 @@ function newGame(opts) {
     outs: 0, balls: 0, strikes: 0, batIdx: [0, 0], runners: [], events: [], cmds: [], clock: 0,
     phase: 'none', t: 0, ended: false, derbyHr: 0, derbyOuts: 0, derbyLong: 0, derbyMax: 10, derbyN: 0,
     swing: null, pitch: null, batted: false, chase: null, ctrlId: -1, hr: false, walk: false, playRuns: [], cov: {}, humanActT: 0,
-    inp: [{ mx: 0, mz: 0 }, { mx: 0, mz: 0 }], queued: null, stealPlay: false,
+    inp: [{ mx: 0, mz: 0 }, { mx: 0, mz: 0 }], queued: null, stealPlay: false, teamIds, bullpen: [[], []], subs: [0, 0], tut: '',
   });
   S.teams = [[], []]; S.players = [];
+  // titulares con ids 0-17 (como siempre) y relevistas con ids 18-21
   const caps = opts.captains || [opts.demo ? null : { name: SAVE.name, look: SAVE.look }, null];
-  const used = new Set(caps.filter(Boolean).map((c) => c.name));
-  const R = Array.isArray(opts.roster) ? opts.roster : null; // alineación que manda el anfitrión (invitado)
-  let id = 0;
+  const rosters = teamIds.map((id) => teamRoster(id));
   for (let team = 0; team < 2; team++) for (let i = 0; i < 9; i++) {
-    const rr = R ? R[id] || {} : null;
-    const cap = rr ? (rr.c ? { name: String(rr.n || 'Amigo').slice(0, 12), look: sanitizeLook(rr.l) } : null) : i === 0 ? caps[team] : null;
-    const p = makePlayer(id++, team, rr ? String(rr.n || 'Jugador').slice(0, 14) : cap ? cap.name : cpuName(used), rr ? sanitizeLook(rr.l) : cap ? cap.look : randomLook(), !cap, ROLES[i]);
+    const src = rosters[team][i], cap = i === 0 ? caps[team] : null;
+    const r = Object.assign({}, src.r);
+    if (cap) for (const k of ['pow', 'con', 'spd', 'arm', 'vel', 'ctl', 'sta']) r[k] = Math.min(99, r[k] + 4); // tu jugador, un poco mejor
+    const p = makePlayer(team * 9 + i, team, cap ? String(cap.name).slice(0, 12) : src.name, cap ? sanitizeLook(cap.look) : src.look, !cap, ROLES[i], r);
     p.order = i;
-    if (cap) { p.pow = 1.04; p.spd = 1.04; p.arm = 1.05; p.captain = true; }
-    S.teams[team].push(p); S.players.push(p);
+    if (cap) p.captain = true;
+    S.teams[team].push(p); S.players[p.id] = p;
+  }
+  for (let team = 0; team < 2; team++) for (let j = 0; j < 2; j++) {
+    const src = rosters[team][9 + j];
+    const p = makePlayer(18 + team * 2 + j, team, src.name, src.look, true, 'RP', Object.assign({}, src.r));
+    p.order = -1; p.bench = true;
+    S.bullpen[team].push(p); S.players[p.id] = p;
   }
   S.avatarId = S.me >= 0 ? S.teams[S.me][0].id : -1;
   S.ball = { x: 0, y: 1, z: 0, vx: 0, vy: 0, vz: 0, st: 'held', holder: null, bounced: false, wall: false, batted: false, thrown: false, noCatchT: 0, noCatchT2: 0, outOfPark: false, fromId: -1, tgtBase: -1, b0x: 0, b0z: 0, side: false };
@@ -1718,7 +1838,23 @@ function ballToPitcher() {
   const b = S.ball;
   Object.assign(b, { st: 'held', holder: byRole('P'), vx: 0, vy: 0, vz: 0, outOfPark: false, bounced: false, wall: false, batted: false, thrown: false, side: false });
 }
+// relevo: entra un lanzador del banquillo y ocupa el lugar del que sale (también en el orden al bate)
+function swapPitcher(team) {
+  const T = S.teams[team], idx = T.findIndex((p) => p.role === 'P');
+  const nw = S.bullpen[team][0];
+  if (idx < 0 || !nw || S.derby) return false;
+  S.bullpen[team].shift();
+  const old = T[idx];
+  Object.assign(nw, { role: 'P', order: old.order, bench: false, x: POS.P[0], z: POS.P[1], y: 0, vx: 0, vz: 0, ry: 0, anim: 'idle', animT: 0, snap: true, stam: 100, hx: POS.P[0], hz: POS.P[1] });
+  Object.assign(old, { bench: true, role: 'RP', order: -1 });
+  T[idx] = nw;
+  S.subs[team]++;
+  if (S.ball.holder === old) S.ball.holder = nw;
+  emit('relief', { team, out: old.name, in: nw.name, id: nw.id });
+  return true;
+}
 function onPitch() {
+  if (!S.derby && !fldH()) { const P = byRole('P'); if (P && P.stam < 25 && S.bullpen[fieldTeam()].length) swapPitcher(fieldTeam()); }
   Object.assign(S, { pitch: null, swing: null, contactDone: false, judged: false, cpuSwingAt: 0, batted: false, hr: false, walk: false, pend: null, flyOut: false, fair: null, chase: null, ctrlId: -1, flyCatchable: false, taken: false, waitT: 0, stealPlay: false, queued: null, playRuns: [] });
   S.cpuPitchAt = S.clock + (S.demo ? rand(0.6, 1.0) : S.derby ? rand(0.8, 1.2) : batH() ? rand(0.9, 1.5) : rand(1.0, 1.8));
   for (const f of fielders()) {
@@ -1741,6 +1877,8 @@ const PITCHES = {
 };
 const PITCH_KEYS = Object.keys(PITCHES);
 function cpuPitch() {
+  if (S.tut === 'bat' || S.tut === 'power') return { kind: 'recta', tx: rand(-0.14, 0.14), ty: rand(0.62, 0.88), acc: 1 };
+  if (S.tut === 'steal') return { kind: 'cambio', tx: 0.62, ty: 0.8, acc: 1 };
   let kind;
   const r = Math.random();
   if (S.derby) kind = r < 0.85 ? 'recta' : 'cambio';
@@ -1752,7 +1890,8 @@ function cpuPitch() {
   else if (Math.random() < 0.6) { tx = pick([-1, 1]) * rand(0.45, 0.72); ty = rand(0.35, 1.2); }
   else { tx = rand(-0.3, 0.3); ty = Math.random() < 0.5 ? rand(0.12, 0.3) : rand(1.22, 1.45); }
   const accR = S.derby ? [0.85, 1] : [[0.4, 0.85], [0.55, 0.95], [0.7, 1]][S.settings.diff] || [0.55, 0.95];
-  return { kind, tx, ty, acc: rand(accR[0], accR[1]) };
+  const ctl = S.derby ? 0.5 : byRole('P').ctl ?? 0.5;
+  return { kind, tx, ty, acc: clamp(rand(accR[0], accR[1]) + (ctl - 0.5) * 0.2, 0, 1) };
 }
 function cpuStealDecide() {
   if (S.derby || S.outs >= 2 || S.strikes >= 2) return;
@@ -1762,9 +1901,13 @@ function cpuStealDecide() {
   else if (r2 && !r3 && !r1 && Math.random() < pr * 0.5) r2.steal = true;
 }
 // la precisión (0-1) decide cuánto se desvía de la mira y un poco de velocidad
+// cansancio: por debajo del 60% de energía pierde velocidad y control (hasta k)
+const fatigueK = (pl, k) => 1 - k * clamp((60 - (pl.stam ?? 100)) / 60, 0, 1);
 function startWindup(p) {
   const acc = clamp(Number.isFinite(p.acc) ? p.acc : 0.8, 0, 1);
-  const sc = (1 - acc) * 0.34, a = rand(0, Math.PI * 2);
+  const PP = byRole('P'), tired = 1 - fatigueK(PP, 1);
+  const sc = S.derby ? (1 - acc) * 0.34 : (1 - acc) * 0.34 * (1.2 - 0.4 * (PP.ctl ?? 0.5)) + tired * 0.14, a = rand(0, Math.PI * 2);
+  if (!S.derby) { PP.stam = Math.max(0, (PP.stam ?? 100) - 2.6 / (PP.sta || 1)); if (PP.stam < 30 && !PP.tiredWarn) { PP.tiredWarn = true; emit('tired', { team: PP.team, name: PP.name }); } }
   p.tx = clamp(p.tx + Math.cos(a) * sc, -1.1, 1.1); p.ty = clamp(p.ty + Math.sin(a) * sc, 0.05, 1.8);
   p.sf = 0.95 + 0.07 * acc + (acc > 0.85 ? 0.03 : 0);
   p.acc = acc;
@@ -1792,8 +1935,8 @@ function pitchAt(p, t, out = {}) {
   return out;
 }
 function releasePitch() {
-  const p = S.pitch, b = S.ball, PT = PITCHES[p.kind];
-  const v = PT.v * (p.sf || 1) * (fldH() ? 1 : S.demo ? 0.92 : S.D.pitchV) * (S.derby ? 0.88 : 1);
+  const p = S.pitch, b = S.ball, PT = PITCHES[p.kind], PP = byRole('P');
+  const v = PT.v * (p.sf || 1) * (fldH() ? 1 : S.demo ? 0.92 : S.D.pitchV) * (S.derby ? 0.88 : 1) * (S.derby ? 1 : (PP.vel || 1) * fatigueK(PP, 0.1));
   const p0 = { x: PITCH_REL.x, y: PITCH_REL.y, z: PITCH_REL.z };
   const T0 = (0 - p0.z) / v;
   const a = { x: PT.ax, y: PT.ay };
@@ -1818,12 +1961,13 @@ function cpuBatDecide() {
   if (S.strikes === 2) pSwing += inZ ? 0.15 : 0.12;
   if (S.balls === 3 && !inZ) pSwing *= 0.6;
   S.cpuSwingAt = 0;
+  if (S.tut) return; // en el tutorial la PC no batea
   if (Math.random() > pSwing) return;
   let kind = 'normal';
   const r1 = S.runners.some((r) => live(r) && Math.round(r.p) === 1);
   if (S.outs < 2 && r1 && Math.random() < 0.08) kind = 'bunt';
   else if (S.strikes < 2 && Math.random() < 0.22) kind = 'power';
-  let err = randn() * 3 * D.cpuSig; // randn() tiene desviación 1/3
+  let err = (randn() * 3 * D.cpuSig) / (S.batter.con || 1); // randn() tiene desviación 1/3
   if (p.kind === 'cambio' && Math.random() < 0.55) err -= rand(0.04, 0.09);
   if (p.kind === 'curva') err += randn() * 0.06;
   if (p.kind === 'slider' && !inZ && Math.random() < 0.4) err += randn() * 0.12; // se tira a la que se escapa
@@ -1888,7 +2032,7 @@ function startSwing(kind, c, errIn) {
     if (kind === 'bunt') { const lead = p.tContactAbs - now; err = lead < 0.1 ? 0.1 - lead : lead > 0.8 ? -(lead - 0.8) : 0; }
     else err = now + SWING_DT - p.tContactAbs;
   }
-  const win = batH() && !S.online ? S.D.win : 1;
+  const win = (batH() && !S.online ? S.D.win : 1) * (B.con || 1);
   const res = c && c.mode === 'cursor' && c.cur ? evalCursor(kind, err, p.cross, c.cur, B, win) : evalContact(kind, err, p.crossC, clamp(+(c && c.aim) || 0, -0.8, 0.8), B, win);
   S.swing = { kind, err, res, t0: now };
   B.anim = kind === 'bunt' ? 'bunt' : 'swing'; B.animT = 0;
@@ -1994,12 +2138,22 @@ function doContact() {
   if (S.derby) { enterPhase('play'); return; }
   const br = makeRunner(B, 0, true);
   br.target = 1; br.forced = 1; br.fdone = false; br.startT = S.clock + (sw.kind === 'bunt' ? 0.12 : 0.32);
+  if (S.tut === 'throw') br.speed *= 0.55; // en el tutorial da tiempo a tirar
   let k = 1;
   const occ = (n) => S.runners.find((r) => live(r) && ((standing(r) && Math.round(r.p) === n) || (r.stealing && r.base0 === n)));
   while (k <= 3 && occ(k)) { const r = occ(k); r.forced = k + 1; r.fdone = r.p >= k + 1 - 1e-6; k++; }
   for (const r of S.runners) { r.base0 = r.stealing ? r.base0 : Math.round(r.p); r.manual = false; r.stay = false; r.stealing = false; }
   S.runners.push(br);
   enterPhase('play');
+}
+
+// batazo preparado (tutorial): la pelota sale del home con esa velocidad, ángulo y dirección
+function scriptedHit(v, la, phi) {
+  S.pitch = { kind: 'recta', p0: { x: 0, y: 0.8, z: CONTACT_Z }, v0: { x: 0, y: 0, z: 0 }, a: { x: 0, y: 0 }, tC: 0, cross: { x: 0, y: 0.8 } };
+  S.swing = { kind: 'normal', err: 0, res: { hit: true, v, la, phi, grade: 'good', q: 0.5 } };
+  S.batter.anim = 'swing'; S.batter.animT = SWING_DT;
+  S.phase = 'flight';
+  doContact();
 }
 
 // ---------- física de la pelota ----------
@@ -2201,7 +2355,7 @@ function holderAI(f) {
   if (f.id === S.ctrlId && fldH()) {
     const since = S.clock - Math.max(f.holdT0, S.humanActT);
     const manual = S.throwMode[f.team] === 'manual';
-    if (manual ? since < 2.6 : S.humanActT > (S.contactT || 0) && since < 0.9) return { x: f.x, z: f.z };
+    if (manual ? since < (S.tut ? 99 : 2.6) : S.humanActT > (S.contactT || 0) && since < 0.9) return { x: f.x, z: f.z };
   }
   if (!f.plan || S.clock >= f.replanAt) { f.plan = holderPlan(f); f.replanAt = S.clock + 0.3; }
   const P = f.plan;
@@ -2284,7 +2438,7 @@ function onCatch(f) {
   f.canThrowAt = S.clock + (tH(f.team) ? 0.22 : fD().react * 0.8 + 0.08);
   f.anim = fly || b.y > 1.2 ? 'catch' : 'field'; f.animT = 0;
   S.chase = null;
-  emit('catch', { id: f.id, fly: fly && S.batted, x: b.x, y: b.y, z: b.z, team: f.team });
+  emit('catch', { id: f.id, fly: fly && S.batted, x: b.x, y: b.y, z: b.z, team: f.team, dive: f.diveT > 0 || f.y > 0.3 });
   // tiro preparado: la persona eligió la base antes de atrapar
   const Q = S.queued;
   if (Q && Q.team === f.team && S.clock < Q.until && fldH()) {
@@ -2429,7 +2583,10 @@ function runnersStep(dt) {
     else if (r.target < r.p - 1e-6) r.p = Math.max(r.target, r.p - v);
     if (r.p !== p0) touchBases(r, p0, r.p);
     if (r.p >= 4 - 1e-6 && !r.scored) { scoreRun(r); continue; }
-    if (r.manual && Math.abs(r.p - r.target) < 1e-6) { r.manual = false; r.stealing = false; }
+    if (r.manual && Math.abs(r.p - r.target) < 1e-6) {
+      if (r.stealing && onBase(r) && Math.round(r.p) === r.base0 + 1) { r.pl.stats.sb = (r.pl.stats.sb || 0) + 1; emit('sb', { team: r.pl.team, base: Math.round(r.p) }); }
+      r.manual = false; r.stealing = false;
+    }
     r.slideT = Math.max(0, r.slideT - dt);
     // se desliza si la jugada en la base es cerrada
     if (!S.hr && !S.walk && r.slideT <= 0 && !r.slid && Number.isInteger(r.target) && r.target > r.p && r.target >= 2) {
@@ -2640,6 +2797,7 @@ function onSwitch() {
   emit('switch', { capHit: S.capHit });
 }
 function nextHalf() {
+  for (const T of S.teams) for (const p of T) if (p.role === 'P') p.stam = Math.min(100, (p.stam ?? 100) + 10); // descansa un poco en el banquillo
   if (S.half === 0) S.half = 1; else { S.half = 0; S.inning++; }
   S.runners = [];
   enterPhase('pre');
@@ -2653,6 +2811,7 @@ function simStep(dt) {
     case 'pre': if (S.t > (S.demo ? 1.0 : 2.2)) enterPhase('pitch'); break;
     case 'pitch': {
       for (const c of cmds) if (c.t === 'steal' && c.team === batTeam() && batH()) stealCmd(c.base | 0);
+      for (const c of cmds) if (c.t === 'relief' && c.team === fieldTeam() && fldH() && swapPitcher(fieldTeam())) { ballToPitcher(); break; }
       if (fldH()) {
         for (const c of cmds) if (c.t === 'pitch' && c.team === fieldTeam()) { startWindup({ kind: String(c.kind), tx: clamp(+c.tx || 0, -0.95, 0.95), ty: clamp(+c.ty || 0.75, 0.12, 1.6), acc: clamp(+c.acc || 0, 0, 1), human: true }); break; }
       } else if (S.clock >= S.cpuPitchAt) startWindup(cpuPitch());
@@ -2691,7 +2850,7 @@ function buildCharacters() {
 // ---------- controles ----------
 const INPUT = { keys: {}, mouse: { nx: 0, ny: 0, has: false }, joy: { x: 0, y: 0 }, batAim: 0, ptx: 0, pty: 0.75, throwBase: 0, cur: { x: 0, y: 0.75 }, power: false, pitchKind: 'recta', lastBatter: null };
 const METER = { on: false, t: 0, kind: 'recta' }; // aro de precisión al lanzar
-const playing = () => (GAME.mode === 'game' || GAME.mode === 'derby' || GAME.mode === 'online') && (!GAME.paused || S.online) && S.on && !S.ended && !S.demo && GAME.screen !== 'scrPause';
+const playing = () => (GAME.mode === 'game' || GAME.mode === 'derby' || GAME.mode === 'online' || GAME.mode === 'tut') && (!GAME.paused || S.online) && S.on && !S.ended && !S.demo && GAME.screen !== 'scrPause' && !RP.on;
 const cursorMode = () => SAVE.batMode !== 'simple';
 function uiCtx() {
   if (!playing()) return 'none';
@@ -2732,7 +2891,8 @@ function meterRelease() {
   const acc = clamp(1 - Math.abs(meterR() - 0.1) / 0.28, 0, 1);
   pushCmd({ t: 'pitch', kind: METER.kind, tx: INPUT.ptx, ty: INPUT.pty, acc });
   popText(INPUT.ptx, INPUT.pty + 0.35, 0, acc > 0.85 ? '¡PERFECTO!' : acc > 0.6 ? 'BIEN' : 'IMPRECISO', acc > 0.85 ? 'perfect' : acc > 0.6 ? 'good' : 'bad');
-  if (acc > 0.85) SFX.perfect();
+  if (acc > 0.85) { SFX.perfect(); goal('perfPitch'); }
+  if (GAME.mode === 'tut') TUT.event({ type: 'myPitch', acc });
 }
 function meterTick(dt, ctx) {
   if (!METER.on) return;
@@ -2784,8 +2944,11 @@ function act(btn, src) {
     else if (btn === 'dive') pushCmd({ t: 'dive' });
   }
 }
+// cualquier toque o tecla salta la repetición
+addEventListener('pointerdown', () => { if (RP.on) rpStop(); }, true);
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
+  if (RP.on) { rpStop(); e.preventDefault(); return; }
   INPUT.keys[e.code] = true;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
@@ -2798,6 +2961,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'KeyJ' || e.code === 'Enter') act('main');
   else if (e.code === 'KeyQ' || e.code === 'KeyL' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') act('dive');
   else if (/^(Digit|Numpad)[1-4]$/.test(e.code)) baseTap(+e.code.slice(-1));
+  else if (e.code === 'KeyR') askRelief();
 });
 addEventListener('keyup', (e) => { INPUT.keys[e.code] = false; });
 addEventListener('blur', () => { INPUT.keys = {}; });
@@ -3107,7 +3271,7 @@ function renderGame(dt) {
     t.style.transform = `translate(${s.x | 0}px,${s.y | 0}px) translate(-50%,-100%) scale(${sc.toFixed(2)})`;
   }
   // marcador gigante
-  const key = `${S.score[0]}|${S.score[1]}|${S.inning}|${S.half}|${S.outs}|${S.derbyHr}|${S.derby}`;
+  const key = `${S.score[0]}|${S.score[1]}|${S.inning}|${S.half}|${S.outs}|${S.derbyHr}|${S.derby}|${TEAM_NAME[0]}|${TEAM_NAME[1]}|${TEAM_CSS[0]}|${TEAM_CSS[1]}`;
   if (key !== BOARD.key) { BOARD.key = key; drawBoard(S); }
 }
 
@@ -3151,6 +3315,26 @@ function hintText(ctx) {
   }
   return '';
 }
+// energía de tu lanzador y botón de relevo (solo cuando defiendes)
+const STA = { box: $('#staBox'), name: $('#staName'), pct: $('#staPct'), bar: $('#staBar'), btn: $('#bRelief'), key: '' };
+const bullpenLeft = (t) => (S.net === 'client' ? (S.bullpenLeft || [0, 0])[t] : S.bullpen[t].length);
+function updateStamina() {
+  const on = humanFields() && ['pitch', 'windup', 'flight', 'dead'].includes(S.phase) && !S.batted;
+  STA.box.classList.toggle('on', on);
+  if (!on) return;
+  const P = byRole('P');
+  if (!P) return;
+  const st = Math.round(P.stam ?? 100), left = bullpenLeft(S.me), can = S.phase === 'pitch' && left > 0;
+  const key = P.id + '|' + st + '|' + left + '|' + can;
+  if (key === STA.key) return;
+  STA.key = key;
+  STA.name.textContent = P.name; STA.pct.textContent = st + '%';
+  STA.bar.style.width = st + '%'; STA.bar.style.background = st > 60 ? '#2fd27a' : st > 30 ? '#ffc93a' : '#ff5a5a';
+  STA.btn.textContent = left ? `🔄 Relevo (${left})` : 'Sin relevistas';
+  STA.btn.disabled = !can;
+}
+STA.btn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); askRelief(); });
+function askRelief() { if (uiCtx() === 'pitch' && !METER.on && bullpenLeft(S.me) > 0) { pushCmd({ t: 'relief' }); SFX.ui(); } }
 // rombo de bases (arriba a la izquierda): tirar, mandar corredores, robar o elegir lanzamiento
 const DMD = { el: $('#bd'), cap: $('#bdCap'), btn: {} };
 for (const b of $$('#bd button')) DMD.btn[b.dataset.b] = b;
@@ -3195,7 +3379,8 @@ function updateHud(ctx) {
   if (HUD.hint.textContent !== h) HUD.hint.textContent = h;
   HUD.hint.classList.toggle('on', !!h);
   updateDiamond(ctx);
-  const key = ctx + (ctx === 'bat' ? INPUT.power : ctx === 'pitch' ? INPUT.pitchKind + METER.on : '');
+  updateStamina();
+  const key = ctx +(ctx === 'bat' ? INPUT.power : ctx === 'pitch' ? INPUT.pitchKind + METER.on : '');
   if (key !== HUD.ctx) {
     HUD.ctx = key;
     const L = TB_LAYOUT[ctx] || {};
@@ -3238,10 +3423,142 @@ function toast(msg, ms = 2600) {
   toastT = setTimeout(() => t.classList.remove('on'), ms);
 }
 
+// =========================================================
+//  RETOS DIARIOS, LOGROS Y NARRADOR
+// =========================================================
+const GOALS = [
+  { id: 'hit3', ico: '🏏', text: 'Batea 3 hits', ev: 'hit', n: 3, xp: 60 },
+  { id: 'hr1', ico: '💥', text: 'Conecta un jonrón', ev: 'hr', n: 1, xp: 90 },
+  { id: 'k4', ico: '🔥', text: 'Poncha a 4 bateadores', ev: 'kOut', n: 4, xp: 70 },
+  { id: 'sb1', ico: '🦊', text: 'Roba una base', ev: 'sb', n: 1, xp: 60 },
+  { id: 'win1', ico: '🏆', text: 'Gana un partido', ev: 'win', n: 1, xp: 100 },
+  { id: 'dp1', ico: '✂️', text: 'Haz un doble play', ev: 'dp', n: 1, xp: 90 },
+  { id: 'run5', ico: '🏃', text: 'Anota 5 carreras', ev: 'run', n: 5, xp: 70 },
+  { id: 'pp3', ico: '🎯', text: '3 lanzamientos perfectos', ev: 'perfPitch', n: 3, xp: 60 },
+  { id: 'pb2', ico: '⚡', text: '2 batazos perfectos', ev: 'perfBat', n: 2, xp: 60 },
+  { id: 'dhr5', ico: '🚀', text: '5 jonrones en un derby', ev: 'derbyHr', n: 5, xp: 90 },
+  { id: 'dive1', ico: '🧤', text: 'Atrapa una pelota lanzándote', ev: 'diveCatch', n: 1, xp: 90 },
+  { id: 'onl1', ico: '🌐', text: 'Juega un partido en línea', ev: 'online', n: 1, xp: 90 },
+];
+const ACHS = [
+  { id: 'firstHr', ico: '💥', name: 'Primer jonrón', desc: 'Conecta tu primer jonrón' },
+  { id: 'grand', ico: '🎆', name: 'Grand slam', desc: 'Jonrón con las bases llenas' },
+  { id: 'hr70', ico: '🌙', name: 'A la luna', desc: 'Jonrón de 70 metros o más' },
+  { id: 'shutout', ico: '🧱', name: 'Blanqueada', desc: 'Gana sin que el rival anote' },
+  { id: 'win10', ico: '🏆', name: 'Diez victorias', desc: 'Gana 10 partidos' },
+  { id: 'hard', ico: '💪', name: 'Sin miedo', desc: 'Gana en Difícil' },
+  { id: 'walkoff', ico: '🎉', name: 'En el terreno', desc: 'Gana con carrera en tu último turno' },
+  { id: 'hits12', ico: '🌧️', name: 'Lluvia de hits', desc: '12 hits de tu equipo en un partido' },
+  { id: 'dp', ico: '✂️', name: 'Doble play', desc: 'Saca dos outs en una jugada' },
+  { id: 'dive', ico: '🧤', name: 'Plancha', desc: 'Atrapa un elevado lanzándote o saltando' },
+  { id: 'thief', ico: '🦊', name: 'Ladrón', desc: 'Roba 10 bases en total' },
+  { id: 'k50', ico: '🔥', name: 'Ponchador', desc: 'Poncha a 50 bateadores en total' },
+  { id: 'derby10', ico: '🚀', name: 'Rey del derby', desc: '10 jonrones en un derby' },
+  { id: 'cup', ico: '👑', name: 'Campeón', desc: 'Gana la Copa' },
+  { id: 'online', ico: '🌐', name: 'Rival de verdad', desc: 'Gana un partido en línea' },
+  { id: 'tut', ico: '📘', name: 'Alumno', desc: 'Completa el tutorial' },
+];
+const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+function dailyState() {
+  const day = todayKey();
+  if (!SAVE.daily || SAVE.daily.day !== day) {
+    const rng = mulberry32(hashStr('reto' + day)), pool = GOALS.slice(), list = [];
+    while (list.length < 3) list.push(pool.splice(Math.floor(rng() * pool.length), 1)[0].id);
+    SAVE.daily = { day, list, prog: {}, done: {} };
+    storeSave();
+  }
+  return SAVE.daily;
+}
+// algo que cuenta para un reto de hoy
+function goal(ev, n = 1) {
+  if (S.demo || GAME.mode === 'tut') return;
+  const D = dailyState();
+  for (const id of D.list) {
+    const g = GOALS.find((x) => x.id === id);
+    if (!g || g.ev !== ev || D.done[id]) continue;
+    D.prog[id] = (D.prog[id] || 0) + n;
+    if (D.prog[id] >= g.n) {
+      D.done[id] = true;
+      SAVE.xp += g.xp; while (SAVE.xp >= xpNeed(SAVE.level)) { SAVE.xp -= xpNeed(SAVE.level); SAVE.level++; }
+      toast(`🎯 Reto cumplido: ${g.text} · +${g.xp} XP`, 3200); SFX.levelUp();
+    }
+  }
+  storeSave();
+}
+function ach(id) {
+  if (S.demo || (GAME.mode === 'tut' && id !== 'tut')) return;
+  SAVE.ach = SAVE.ach || {};
+  if (SAVE.ach[id]) return;
+  const a = ACHS.find((x) => x.id === id);
+  if (!a) return;
+  SAVE.ach[id] = todayKey();
+  SAVE.xp += 50; while (SAVE.xp >= xpNeed(SAVE.level)) { SAVE.xp -= xpNeed(SAVE.level); SAVE.level++; }
+  storeSave();
+  setTimeout(() => { toast(`🏅 Logro: ${a.ico} ${a.name} · +50 XP`, 3200); SFX.perfect(); }, 900);
+}
+function tally(k, n = 1) { SAVE.tot = SAVE.tot || {}; SAVE.tot[k] = (SAVE.tot[k] || 0) + n; storeSave(); return SAVE.tot[k]; }
+const ORD = ['', 'primera', 'segunda', 'tercera', 'cuarta', 'quinta', 'sexta', 'séptima', 'octava', 'novena'];
+// narrador, repeticiones y retos a partir de lo que pasa en el partido
+function metaEvent(e) {
+  const mine = (t) => t === S.me;
+  switch (e.type) {
+    case 'half': if (!S.derby) say(`${S.half ? 'Parte baja' : 'Parte alta'} de la ${ORD[S.inning] || S.inning} entrada`, 0); break;
+    case 'call': say(e.call === 'ball' ? ['Bola.', 'Bola, afuera.'] : e.call === 'whiff' ? ['¡Abanicó!', '¡Le tiró y falló!'] : ['¡Strike!', '¡Strike cantado!'], 0); break;
+    case 'k': say(['¡Ponchado!', '¡Se ponchó!', '¡Lo dejó mirando!'], 1); if (!mine(e.team) && S.me >= 0) { goal('kOut'); if (tally('k') >= 50) ach('k50'); } break;
+    case 'walk': say('Base por bolas.', 0); break;
+    case 'crack': if (e.grade === 'perfect' && mine(e.team)) goal('perfBat'); break;
+    case 'hitType':
+      if (e.bases < 4) say(e.bases === 1 ? ['¡Hit!', '¡Sencillo!', '¡Se embasa!'] : e.bases === 2 ? ['¡Doble!', '¡Batazo de dos bases!'] : ['¡Triple!', '¡Hasta tercera!'], 1);
+      if (mine(e.team)) goal('hit');
+      if (e.bases === 3) rpMark('¡TRIPLE!');
+      break;
+    case 'hr':
+      say(['¡Se va, se va, se fue! ¡Jonrón!', '¡Adiós pelota! ¡Jonrón!', '¡Cuadrangular!'], 2);
+      rpMark('¡JONRÓN!', 1.8);
+      if (mine(e.team) || S.derby) {
+        goal(S.derby ? 'derbyHr' : 'hr'); ach('firstHr');
+        if (e.dist >= 70) ach('hr70');
+        if (!S.derby && S.runners.filter((r) => live(r) && !r.isBatter).length >= 3) ach('grand');
+      }
+      break;
+    case 'run': if (mine(e.team)) goal('run'); say(['¡Anota!', '¡Carrera!'], 0); break;
+    case 'out':
+      if (e.n === 2) { say('¡Doble play!', 2); rpMark('¡DOBLE PLAY!'); if (!mine(e.team) && S.me >= 0) { goal('dp'); ach('dp'); } }
+      else say(['¡Out!', '¡Fuera!'], 0);
+      if (Math.hypot(e.x, e.z) < 1.6 && e.how !== 'fly') rpMark('¡OUT EN HOME!');
+      break;
+    case 'catch':
+      if (e.fly && e.dive) { say('¡Qué atrapada!', 2); rpMark('¡QUÉ ATRAPADA!'); if (mine(e.team)) { goal('diveCatch'); ach('dive'); } }
+      else if (e.fly) say(['¡La atrapa!', '¡Elevado y out!'], 0);
+      break;
+    case 'steal': say('¡Va al robo!', 1); break;
+    case 'sb': say('¡Base robada!', 1); if (mine(e.team)) { goal('sb'); if (tally('sb') >= 10) ach('thief'); } break;
+    case 'relief': say('Cambio de lanzador.', 1); break;
+  }
+}
+// público: más ruido con corredores, en la última entrada y con elevados largos
+const CROWD = { t: 0, clapT: 4 };
+function crowdTick(dt) {
+  if (!GAME.mode || GAME.mode === 'menu') { SFX.crowd(GAME.screen ? 0.012 : 0.02); return; }
+  if (GAME.paused && !S.online) { SFX.crowd(0); return; }
+  const b = S.ball;
+  let lvl = 0.03;
+  lvl += 0.012 * S.runners.filter((r) => live(r) && standing(r) && Math.round(r.p) >= 2).length;
+  if (S.inning >= S.innings) lvl += 0.015;
+  if (S.phase === 'play' && b.st === 'air' && !b.holder) lvl += clamp((b.y - 4) / 10, 0, 1) * clamp((Math.hypot(b.x, b.z) - 20) / 25, 0, 1) * 0.12;
+  if (S.hr) lvl += 0.08;
+  SFX.crowd(lvl);
+  // palmas rítmicas antes del lanzamiento cuando hay tensión
+  CROWD.clapT -= dt;
+  if (CROWD.clapT <= 0) { CROWD.clapT = rand(5, 9); if (S.phase === 'pitch' && (S.strikes === 2 || lvl > 0.05)) SFX.claps(); }
+}
+
 // ---------- eventos → sonido, partículas y textos ----------
 function handleEvent(e) {
   if (window.__JPlog) window.__JPlog.push(Object.assign({ c: +S.clock.toFixed(2), ph: S.phase }, e, e.r ? { r: undefined } : {}));
   if (S.demo) { if (e.type === 'end') setTimeout(() => { if (GAME.mode === 'menu') startDemo(); }, 600); return; }
+  metaEvent(e);
+  if (GAME.mode === 'tut') TUT.event(e);
   const mine = (team) => team === S.me;
   const b = S.ball;
   switch (e.type) {
@@ -3256,6 +3573,8 @@ function handleEvent(e) {
     case 'swing': SFX.swish(1); if (e.far && humanBats() && S.net !== 'client') popText(INPUT.cur.x, INPUT.cur.y + 0.3, 0, '¡LEJOS!', 'bad'); break;
     case 'steal': popText(BASES[2].x * 0.5, 2.2, BASES[2].z * 0.5, '¡ROBO!', mine(e.team) ? 'good' : 'bad'); SFX.cheer(0.4); break;
     case 'stealArm': if (S.net !== 'client') popText(BASES[e.base].x, 2, BASES[e.base].z, e.on ? 'ROBO LISTO' : 'SIN ROBO', 'good'); break;
+    case 'tired': if (mine(e.team)) toast(`😓 ${e.name} está cansado: lanza más lento y menos preciso. Pide un 🔄 relevo`, 3500); else popText(0, 2.4, -10.6, '¡CANSADO!', 'good'); break;
+    case 'relief': showBanner('RELEVO', `Entra ${e.in} por ${e.out}`, TEAM_CSS[e.team]); SFX.ui(); if (GAME.chars.get(e.id)) GAME.chars.get(e.id).snapYaw = true; break;
     case 'queued': if (mine(e.team)) popText(BASES[e.base].x, 2, BASES[e.base].z, 'TIRO A ' + (e.base === 4 ? 'HOME' : e.base + 'ª'), 'good'); break;
     case 'crack': {
       SFX.crack(clamp(e.q, 0.2, 1));
@@ -3318,13 +3637,276 @@ function handleEvent(e) {
   }
 }
 
+// =========================================================
+//  REPETICIONES (jonrones y jugadas buenas, solo sin conexión)
+// =========================================================
+const RP = { buf: [], on: false, frames: null, t: 0, i: 0, ang: 0, want: null, title: '' };
+function rpMark(title, prio = 1) {
+  if (S.online || S.demo || GAME.mode === 'tut' || SAVE.replays === false) return;
+  if (RP.want && RP.want.prio >= prio) return;
+  RP.want = { title, prio, t0: (S.batted && S.contactT ? S.contactT : S.clock - 3) - 0.7, dur: prio > 1.5 ? 4.6 : 5.6 };
+}
+function rpRecord() {
+  if (S.online || S.demo || RP.on || !S.on || GAME.mode === 'tut') return;
+  const ps = [];
+  for (const p of S.players) { const c = GAME.chars.get(p.id); if (c && c.root.visible) ps.push([p.id, p.x, p.y, p.z, p.ry, p.anim, p.animT, c.gear]); }
+  RP.buf.push({ t: S.clock, p: ps, b: [ballMesh.position.x, ballMesh.position.y, ballMesh.position.z, ballMesh.visible ? 1 : 0] });
+  while (RP.buf.length && S.clock - RP.buf[0].t > 10) RP.buf.shift();
+}
+function rpMaybeStart() {
+  if (!RP.want || RP.on || S.phase !== 'dead' || S.t < 0.7) return;
+  const W = RP.want;
+  RP.want = null;
+  const frames = RP.buf.filter((f) => f.t >= W.t0 && f.t <= Math.min(S.clock - 0.3, W.t0 + W.dur));
+  if (frames.length < 30) return;
+  Object.assign(RP, { on: true, frames, t: frames[0].t, i: 0, ang: rand(0, Math.PI * 2), title: W.title });
+  document.body.classList.add('replay');
+  $('#rpTitle').textContent = W.title;
+  for (const t of GAME.tags.values()) t.style.display = 'none';
+}
+function rpStop() {
+  if (!RP.on) return;
+  RP.on = false; RP.frames = null; RP.buf = [];
+  document.body.classList.remove('replay');
+  for (const c of GAME.chars.values()) c.px = undefined;
+}
+const _rpS = { x: 0, y: 0, z: 0, ry: 0, anim: 'idle', animT: 0 };
+// reproduce la jugada grabada a cámara lenta; la simulación queda en pausa mientras tanto
+function rpTick(dt) {
+  const F = RP.frames;
+  RP.t += dt * 0.6;
+  while (RP.i < F.length - 2 && F[RP.i + 1].t <= RP.t) RP.i++;
+  if (RP.t >= F[F.length - 1].t) { rpStop(); return; }
+  const f = F[RP.i], seen = new Set();
+  for (const a of f.p) {
+    const c = GAME.chars.get(a[0]);
+    if (!c) continue;
+    seen.add(a[0]);
+    c.root.visible = true;
+    c.setGear(a[7]); c.setGhost(1);
+    Object.assign(_rpS, { x: a[1], y: a[2], z: a[3], ry: a[4], anim: a[5], animT: a[6] });
+    c.update(dt * 0.6, _rpS, f.b[0], f.b[1], f.b[2], { dust: false });
+  }
+  for (const [id, c] of GAME.chars) if (!seen.has(id)) c.root.visible = false;
+  ballMesh.position.set(f.b[0], f.b[1], f.b[2]); ballMesh.visible = !!f.b[3];
+  ballShadow.position.set(f.b[0], 0.02, f.b[2]);
+  for (const m of [landMark, aimMark, aimWedge, zoneGrp, pitchMark, pitchDot, crossMark, timingRing, batCursor, meterRing, meterGoal]) m.visible = false;
+  for (let k = 1; k <= 4; k++) baseRings[k].visible = false;
+  // cámara por delante de la pelota mirando hacia home (se ve el campo de fondo), con un leve vaivén
+  RP.ang += dt * 0.5;
+  const bx = f.b[0], by = f.b[1], bz = f.b[2], dist = Math.hypot(bx, bz), dd = 9 + Math.min(14, by * 0.6);
+  const ang = (dist > 5 ? Math.atan2(bx, bz) : Math.PI) + Math.sin(RP.ang) * 0.55;
+  _tl.set(bx * 0.85, Math.max(0.9, by * 0.85), bz * 0.85);
+  _tp.set(bx + Math.sin(ang) * dd, Math.max(2.4, by * 0.6 + 2.6), bz + Math.cos(ang) * dd);
+  const k = 1 - Math.exp(-4 * dt);
+  CAM.pos.lerp(_tp, k); CAM.look.lerp(_tl, k);
+  if (Math.abs(camera.fov - 50) > 0.1) { camera.fov = lerp(camera.fov, 50, k); camera.updateProjectionMatrix(); }
+  camera.position.copy(CAM.pos); camera.lookAt(CAM.look);
+}
+
+// =========================================================
+//  COPA (eliminación directa de 8 equipos)
+// =========================================================
+const ROUND_NAMES = ['Cuartos de final', 'Semifinal', 'Final'];
+function newCup() {
+  const me = SAVE.team || 'verdes';
+  const others = TEAMS.filter((t) => t.id !== me).map((t) => t.id).sort(() => Math.random() - 0.5).slice(0, 7);
+  SAVE.cup = { team: me, rounds: [[me, ...others]], round: 0, alive: true, champion: null };
+  storeSave();
+}
+function cupOpponent() { const C = SAVE.cup, R = C.rounds[C.round], i = R.indexOf(C.team); return i >= 0 ? R[i ^ 1] : null; }
+function cupSim(a, b) { const pa = teamOvr(teamOf(a)), pb = teamOvr(teamOf(b)); return Math.random() < 1 / (1 + Math.exp(-(pa - pb) / 6)) ? a : b; }
+// resultado de tu partido de copa: avanza el cuadro (los demás partidos se simulan)
+function cupResolve(won) {
+  const C = SAVE.cup;
+  if (!C || C.champion || !C.alive) return 0;
+  const R = C.rounds[C.round], next = [];
+  for (let i = 0; i < R.length; i += 2) {
+    const a = R[i], b = R[i + 1];
+    next.push(a === C.team || b === C.team ? (won ? C.team : a === C.team ? b : a) : cupSim(a, b));
+  }
+  C.rounds.push(next); C.round++;
+  if (!won) C.alive = false;
+  while (next.length > 1 && !C.alive) { // eliminado: se juega el resto sin ti
+    const R2 = C.rounds[C.round], n2 = [];
+    for (let i = 0; i < R2.length; i += 2) n2.push(cupSim(R2[i], R2[i + 1]));
+    C.rounds.push(n2); C.round++;
+    if (n2.length === 1) break;
+  }
+  const last = C.rounds[C.rounds.length - 1];
+  if (last.length === 1) C.champion = last[0];
+  storeSave();
+  if (C.champion === C.team) { ach('cup'); return 200; }
+  return won ? 50 + C.round * 20 : 20;
+}
+function openCup() { if (!SAVE.cup) newCup(); showScreen('scrCup'); renderCup(); }
+function renderCup() {
+  const C = SAVE.cup;
+  if (!C) return;
+  const cols = ['Cuartos', 'Semifinal', 'Final', 'Campeón'];
+  let html = '<div class="bracket">';
+  for (let r = 0; r < 4; r++) {
+    const R = C.rounds[r];
+    html += `<div class="bcol"><div class="bhead">${cols[r]}</div><div class="bms">`;
+    if (!R) html += r === 3 ? '<div class="bmatch champ">?</div>' : '<div class="bmatch"><div class="bteam tbd">?</div><div class="bteam tbd">?</div></div>'.repeat(r === 1 ? 2 : 1);
+    else if (r === 3) { const T = teamOf(R[0]); html += `<div class="bmatch champ">${T.badge} ${T.name}</div>`; }
+    else for (let i = 0; i < R.length; i += 2) {
+      const nx = C.rounds[r + 1];
+      html += '<div class="bmatch">' + [R[i], R[i + 1]].map((id) => {
+        const T = teamOf(id), win = nx && nx.includes(id), lose = nx && !nx.includes(id);
+        return `<div class="bteam${id === C.team ? ' me' : ''}${win ? ' win' : ''}${lose ? ' lose' : ''}" style="--tc:${T.col}">${T.badge} ${T.name}</div>`;
+      }).join('') + '</div>';
+    }
+    html += '</div></div>';
+  }
+  html += '</div>';
+  const me = teamOf(C.team);
+  if (C.champion === C.team) html += `<div class="mvp">👑 ¡${me.name} campeón de la Copa!</div>`;
+  else if (!C.alive) html += `<div class="mvp">❌ Eliminado. Campeón: ${C.champion ? teamOf(C.champion).badge + ' ' + teamOf(C.champion).name : '…'}</div>`;
+  else { const op = teamOf(cupOpponent()); html += `<div class="mvp">${ROUND_NAMES[C.round]}: ${me.badge} ${me.name} vs ${op.badge} ${op.name} <small>(media ${teamOvr(op)})</small></div>`; }
+  $('#cupBody').innerHTML = html;
+  const live = C.alive && !C.champion;
+  $('#bCupPlay').style.display = live ? '' : 'none';
+  $('#bCupPlay').textContent = live ? `▶ Jugar ${ROUND_NAMES[C.round].toLowerCase()}` : '';
+  $('#bCupNew').textContent = live ? '🔄 Empezar otra Copa (con tu equipo actual)' : '🏆 Nueva Copa';
+}
+function playCup() {
+  const C = SAVE.cup;
+  if (!C || !C.alive || C.champion) return;
+  GAME.cupGame = true;
+  GAME.nextTeams = [C.team, cupOpponent()];
+  GAME.nextDiff = Math.min(2, SAVE.diff + (C.round === 2 ? 1 : 0));
+  startGame(false);
+}
+
+// =========================================================
+//  TUTORIAL INTERACTIVO (lecciones que se completan jugando)
+// =========================================================
+const TK = IS_TOUCH
+  ? { move: 'el joystick', swing: 'BATEAR', power: 'PODER', pitch: 'un lanzamiento (RECTA…)', again: 'toca otra vez' }
+  : { move: 'el ratón', swing: 'clic', power: 'Espacio', pitch: 'clic', again: 'clic otra vez' };
+const TUT = {
+  on: false, i: 0, prog: 0, wait: 0,
+  lessons: [
+    { k: 'bat', title: 'Batea con el círculo', need: 2, text: () => `Mueve el <b>círculo del bate</b> con ${TK.move} hasta donde va a pasar la pelota (la marca blanca te lo enseña) y pulsa <b>${TK.swing}</b> cuando el aro amarillo se cierre. Conecta <b>2 pelotas</b>.` },
+    { k: 'power', title: 'Modo poder', need: 1, text: () => `Pulsa <b>${TK.power}</b> para el modo poder: el círculo se hace pequeño y naranja, pero pega mucho más fuerte. Conecta <b>1 batazo de poder</b>.` },
+    { k: 'pitch', title: 'Lanza con el aro', need: 2, text: () => `Ahora lanzas tú. Apunta con ${TK.move}, pulsa <b>${TK.pitch}</b> y ${TK.again} cuando el aro se cierre en el <b>círculo verde</b>. Haz <b>2 lanzamientos precisos</b>.` },
+    { k: 'throw', title: 'Tira a una base', need: 1, text: () => `Le pegan una rola al campocorto. Cuando la atrape, toca la base <b>1ª</b> del rombo (arriba a la izquierda${IS_TOUCH ? '' : ', o la tecla 1'}) para sacar el <b>out</b> antes de que llegue el corredor.` },
+    { k: 'steal', title: 'Roba una base', need: 1, text: () => `Tienes un corredor en 1ª. <b>Antes</b> del lanzamiento toca la base <b>2ª</b> del rombo${IS_TOUCH ? '' : ' (o la tecla 2)'}: saldrá corriendo con el lanzador. No hace falta batear.` },
+  ],
+  start() {
+    this.on = true; this.i = 0;
+    GAME.cupGame = false; GAME.nextTeams = null;
+    document.body.classList.add('tutOn');
+    $('#tutEnd').style.display = 'none'; $('#tutBtns').style.display = '';
+    this.begin();
+  },
+  begin() {
+    const L = this.lessons[this.i];
+    this.prog = 0; this.wait = 0; this.doneT = 0;
+    $('#tutStep').textContent = `${this.i + 1}/${this.lessons.length}`;
+    $('#tutTitle').textContent = L.title;
+    $('#tutText').innerHTML = L.text();
+    this.dots(); this.msg('');
+    HUD.banner.classList.remove('show');
+    GAME.mode = 'tut'; GAME.paused = false;
+    const me = SAVE.team || 'verdes', op = TEAMS.find((t) => t.id !== me).id;
+    setVenue(SAVE.venue);
+    newGame({ settings: { innings: 99, diff: 0, venue: SAVE.venue, help: true }, teams: [me, op], ctl: [true, false], me: 0 });
+    S.D = Object.assign({}, DIFF[0], { pitchV: 0.72, win: 1.5, throwV: L.k === 'steal' ? 0.5 : 0.85 });
+    S.tut = L.k;
+    if (L.k === 'pitch' || L.k === 'throw') { S.half = 1; S.throwMode[0] = 'manual'; enterPhase('pre'); }
+    S.events = [];
+    buildCharacters();
+    METER.on = false; INPUT.power = L.k === 'power';
+    showScreen(null);
+    $('#hud').classList.add('on');
+    $('#touchUI').classList.toggle('on', IS_TOUCH);
+    HUD.ctx = '?';
+  },
+  dots() { const L = this.lessons[this.i]; $('#tutDots').innerHTML = Array.from({ length: L.need }, (_, j) => `<i class="${j < this.prog ? 'on' : ''}"></i>`).join(''); },
+  msg(t, cls) { const m = $('#tutMsg'); m.textContent = t; m.className = cls || ''; },
+  ok(text) {
+    this.prog++; this.dots(); SFX.perfect();
+    const L = this.lessons[this.i];
+    if (this.prog >= L.need) { this.msg('¡Muy bien! ' + (this.i < this.lessons.length - 1 ? 'Siguiente lección…' : ''), 'good'); this.doneT = 1.8; }
+    else this.msg(text || '¡Bien! Otra vez.', 'good');
+  },
+  next() {
+    if (this.i < this.lessons.length - 1) { this.i++; this.begin(); return; }
+    this.finish();
+  },
+  finish() {
+    SAVE.tutDone = true; storeSave(); ach('tut');
+    $('#tutStep').textContent = '✓'; $('#tutTitle').textContent = '¡Tutorial completo!';
+    $('#tutText').innerHTML = 'Ya sabes batear, lanzar, tirar a las bases y robar. ¡A jugar!';
+    $('#tutDots').innerHTML = ''; this.msg('');
+    $('#tutBtns').style.display = 'none'; $('#tutEnd').style.display = '';
+    confetti(0, -6, 120, 8); SFX.levelUp();
+    S.tut = 'done';
+  },
+  stop() { this.on = false; document.body.classList.remove('tutOn'); },
+  // reglas de cada lección (se mira lo que pasa en el partido)
+  event(e) {
+    if (!this.on) return;
+    const k = S.tut, mine = e.team === S.me;
+    if (k === 'bat' && e.type === 'crack' && mine && e.grade !== 'foul') this.ok('¡Conectaste! Una más.');
+    else if (k === 'bat' && e.type === 'whiff') this.msg(e.early ? 'Muy temprano: espera a que el aro se cierre.' : 'Tarde: pulsa un poquito antes.', 'bad');
+    else if (k === 'power' && e.type === 'crack' && mine && e.kind === 'power' && e.grade !== 'foul') this.ok();
+    else if (k === 'power' && e.type === 'crack' && mine && e.kind !== 'power') this.msg(`Eso fue sin poder: pulsa ${TK.power} antes de batear.`, 'bad');
+    else if (k === 'pitch' && e.type === 'myPitch') { if (e.acc >= 0.6) this.ok('¡Preciso! Otro.'); else this.msg('Impreciso: suelta justo cuando el aro toque el círculo verde.', 'bad'); }
+    else if (k === 'throw' && e.type === 'out' && !mine) this.ok();
+    else if (k === 'steal' && e.type === 'sb' && mine) this.ok();
+    else if (k === 'steal' && e.type === 'out' && mine) this.msg('¡Lo sacaron! Sal con el lanzador: toca 2ª antes de que lance.', 'bad');
+  },
+  // mantiene el escenario de la lección (sin cambiar de entrada, sin ponches que corten, etc.)
+  update(dt) {
+    if (!this.on || !S.on) return;
+    if (this.doneT > 0) { this.doneT -= dt; if (this.doneT <= 0 && S.tut !== 'done') this.next(); return; }
+    const k = S.tut;
+    S.outs = 0;
+    if (S.phase === 'pitch') { S.strikes = Math.min(S.strikes, 2); S.balls = Math.min(S.balls, 3); if (S.strikes === 2 || S.balls === 3) { S.strikes = 0; S.balls = 0; } }
+    if ((k === 'bat' || k === 'power' || k === 'pitch' || k === 'throw') && S.phase === 'dead' && S.t > 0.4) S.runners = S.runners.filter((r) => !live(r) ? false : !(k === 'throw'));
+    if (k === 'steal' && (S.phase === 'pitch' || S.phase === 'dead') && !S.runners.some((r) => live(r) && Math.round(r.p) >= 1)) {
+      const r = makeRunner(S.teams[0][3], 1, false); S.runners = [r];
+    }
+    if ((k === 'bat' || k === 'power') && S.phase === 'dead') S.runners = [];
+    // lección de tiros: en vez de lanzar, la PC le pega una rola al campocorto
+    if (k === 'throw' && S.phase === 'pitch' && S.t > 1.4) scriptedHit(15.5, -5 * DEG, -0.32);
+  },
+};
+$('#tutSkip').onclick = () => { SFX.ui(); TUT.next(); };
+$('#tutExit').onclick = () => { SFX.ui(); leaveToMenu(); };
+$('#tutPlay').onclick = () => { SFX.ui(); leaveToMenu(); showScreen('scrSetup'); };
+$('#tutMenu').onclick = () => { SFX.ui(); leaveToMenu(); };
+
+// ---------- retos y logros (pantalla) ----------
+let goalTab = 'daily';
+function openGoals() { showScreen('scrGoals'); renderGoals(); }
+function renderGoals() {
+  $$('#goalTabs .tab').forEach((b) => b.classList.toggle('sel', b.dataset.gt === goalTab));
+  let html = '';
+  if (goalTab === 'daily') {
+    const D = dailyState();
+    html = '<p class="tipSmall">Tres retos nuevos cada día. Se cumplen jugando cualquier modo.</p>' + D.list.map((id) => {
+      const g = GOALS.find((x) => x.id === id), p = Math.min(g.n, D.prog[id] || 0), done = !!D.done[id];
+      return `<div class="goal${done ? ' done' : ''}"><div class="gico">${done ? '✅' : g.ico}</div><div class="ginfo"><b>${g.text}</b><span class="abar"><i style="width:${(p / g.n) * 100}%;background:${done ? '#2fd27a' : '#3a7bff'}"></i></span><small>${p} / ${g.n}</small></div><div class="gxp">+${g.xp} XP</div></div>`;
+    }).join('');
+  } else {
+    const A = SAVE.ach || {};
+    const n = ACHS.filter((a) => A[a.id]).length;
+    html = `<p class="tipSmall">${n} de ${ACHS.length} logros · cada uno da +50 XP</p><div class="achGrid">` + ACHS.map((a) => `<div class="ach${A[a.id] ? ' got' : ''}"><div class="aico">${A[a.id] ? a.ico : '🔒'}</div><b>${a.name}</b><small>${a.desc}</small></div>`).join('') + '</div>';
+  }
+  $('#goalsBody').innerHTML = html;
+}
+
 // ---------- pantallas ----------
 function showScreen(id) {
   $$('.screen').forEach((s) => s.classList.toggle('on', s.id === id));
   const prev = GAME.screen;
   GAME.screen = id || '';
   if (id === 'scrMenu') refreshMenu();
-  if (id === 'scrSetup') syncChips();
+  if (id === 'scrSetup') { syncChips(); renderSetupTeams(); }
   if (id === 'scrHelp' && !SAVE.seenHelp) { SAVE.seenHelp = true; storeSave(); }
   if (id === 'scrCustom' && prev !== 'scrCustom') openCustom();
   if (id !== 'scrCustom' && prev === 'scrCustom') closeCustom();
@@ -3337,7 +3919,15 @@ function refreshMenu() {
   $('#mXpTxt').textContent = `${SAVE.xp} / ${need} XP para el nivel ${SAVE.level + 1}`;
   $('#mStats').textContent = SAVE.games ? `🏆 ${SAVE.wins} victorias · 🔥 racha ${SAVE.streak}` + (SAVE.derbyBest ? ` · 💥 ${SAVE.derbyBest}` : '') : SAVE.derbyBest ? `💥 Récord del derby: ${SAVE.derbyBest}` : '¡Juega tu primer partido!';
   $('#bMute').textContent = SFX.muted ? '🔇' : '🔊';
-  $('#helpBadge').style.display = SAVE.seenHelp ? 'none' : '';
+  $('#tutBadge').style.display = SAVE.tutDone ? 'none' : '';
+  const D = dailyState(), left = D.list.filter((id) => !D.done[id]).length;
+  $('#goalBadge').textContent = left ? left : '';
+}
+function renderSetupTeams() {
+  const me = SAVE.team || 'verdes';
+  if (!SAVE.rival || SAVE.rival === me) SAVE.rival = TEAMS.find((t) => t.id !== me).id;
+  renderTeamPicker($('#sMyTeam'), me, '', (id) => { SAVE.team = id; if (SAVE.rival === id) SAVE.rival = TEAMS.find((t) => t.id !== id).id; storeSave(); SFX.ui(); renderSetupTeams(); });
+  renderTeamPicker($('#sRival'), SAVE.rival, me, (id) => { SAVE.rival = id; storeSave(); SFX.ui(); renderSetupTeams(); });
 }
 function syncChips() {
   $$('[data-opt]').forEach((row) => {
@@ -3362,9 +3952,11 @@ function togglePause() {
 function startGame(derby, opts) {
   GAME.mode = opts ? 'online' : derby ? 'derby' : 'game';
   GAME.paused = false;
-  const settings = opts ? opts.settings : { innings: SAVE.innings, diff: SAVE.diff, venue: SAVE.venue, help: !!SAVE.help };
+  TUT.stop(); rpStop(); RP.want = null; RP.buf = [];
+  if (opts || derby) GAME.cupGame = false;
+  const settings = opts ? opts.settings : { innings: SAVE.innings, diff: GAME.cupGame && GAME.nextDiff != null ? GAME.nextDiff : SAVE.diff, venue: SAVE.venue, help: !!SAVE.help };
   setVenue(settings.venue);
-  newGame(Object.assign({ settings, derby }, opts || {}));
+  newGame(Object.assign({ settings, derby }, !opts && GAME.cupGame && GAME.nextTeams ? { teams: GAME.nextTeams } : {}, opts || {}));
   if (opts && opts.net === 'client') clientInitMatch(opts);
   buildCharacters();
   METER.on = false; INPUT.power = false; INPUT.pitchKind = 'recta';
@@ -3386,6 +3978,8 @@ function startDemo() {
 }
 function leaveToMenu() {
   netReset();
+  TUT.stop(); rpStop();
+  GAME.cupGame = false; GAME.nextTeams = null;
   GAME.paused = false;
   $('#hud').classList.remove('on');
   $('#touchUI').classList.remove('on');
@@ -3425,6 +4019,7 @@ function showEndScreen() {
       $('#eXpGain').textContent = `+${xp} XP` + (rec ? ' · ¡récord!' : '');
       grantXp(xp, oldLv);
       if (rec && S.derbyHr > 0) { confetti(0, -4, 160, 8); SFX.levelUp(); }
+      if (S.derbyHr >= 10) ach('derby10');
       $('#bAgain').textContent = '💥 Otra ronda';
     } else {
       const me = Math.max(0, S.me), op = 1 - me;
@@ -3442,20 +4037,38 @@ function showEndScreen() {
       const rows = S.teams[me];
       $('#eTable').innerHTML = `<tr><th>${TEAM_NAME[me]}</th><th>VB</th><th>H</th><th>HR</th><th>CI</th><th>CA</th><th>K</th></tr>` +
         rows.map((p) => `<tr class="${p.id === S.avatarId ? 'me' : ''}"><td>${escapeHtml(p.name)} <small style="opacity:.55">${p.role}</small></td><td>${p.stats.ab}</td><td>${p.stats.h}</td><td>${p.stats.hr}</td><td>${p.stats.rbi}</td><td>${p.stats.r}</td><td>${p.stats.k}</td></tr>`).join('') +
-        `<tr><td colspan="7" style="text-align:center;opacity:.7;font-size:13px">🎯 Ponches de tu lanzador: <b>${S.teams[me][0].stats.pk}</b></td></tr>`;
-      const T = S.teams[me].reduce((a, p) => ({ h: a.h + p.stats.h, hr: a.hr + p.stats.hr }), { h: 0, hr: 0 });
-      let xp = 60 + (won ? 120 : tie ? 40 : 0) + S.score[me] * 12 + T.h * 6 + T.hr * 25 + S.teams[me][0].stats.pk * 8;
+        `<tr><td colspan="7" style="text-align:center;opacity:.7;font-size:13px">🎯 Ponches de tus lanzadores: <b>${S.players.filter((p) => p.team === me).reduce((a, p) => a + (p.stats.pk || 0), 0)}</b>${S.subs && S.subs[me] ? ` · 🔄 relevos: ${S.subs[me]}` : ''}</td></tr>`;
+      const T = S.players.filter((p) => p.team === me).reduce((a, p) => ({ h: a.h + p.stats.h, hr: a.hr + p.stats.hr, pk: a.pk + (p.stats.pk || 0) }), { h: 0, hr: 0, pk: 0 });
+      let xp = 60 + (won ? 120 : tie ? 40 : 0) + S.score[me] * 12 + T.h * 6 + T.hr * 25 + T.pk * 8;
       if (mvp.id === S.avatarId) xp += 50;
       xp *= S.online ? 1.3 : [0.7, 1, 1.4][S.settings.diff] || 1;
       SAVE.games++;
       if (won) { SAVE.wins++; SAVE.streak++; SAVE.best = Math.max(SAVE.best, SAVE.streak); } else SAVE.streak = 0;
       if (won && SAVE.streak >= 2) xp += SAVE.streak * 15;
       SAVE.hrTotal += T.hr;
+      // retos y logros del partido
+      if (won) goal('win');
+      if (S.online) { goal('online'); if (won) ach('online'); }
+      if (won && S.score[op] === 0) ach('shutout');
+      if (won && SAVE.wins >= 10) ach('win10');
+      if (won && !S.online && S.settings.diff === 2) ach('hard');
+      if (won && S.walkoff && me === 1) ach('walkoff');
+      if (S.hits[me] >= 12) ach('hits12');
+      let cupMsg = '';
+      if (GAME.cupGame && SAVE.cup) {
+        const bonus = cupResolve(won);
+        xp += bonus;
+        const C = SAVE.cup;
+        cupMsg = C.champion === C.team ? `<div class="unlock">👑 ¡CAMPEÓN DE LA COPA! +${bonus} XP</div>` : won ? `<div class="unlock">✅ Pasas a la ${ROUND_NAMES[C.round].toLowerCase()} · +${bonus} XP</div>` : '<div class="unlock">❌ Eliminado de la Copa</div>';
+        if (C.champion === C.team) { confetti(0, -4, 180, 10); SFX.levelUp(); }
+      }
       xp = Math.round(xp);
       $('#eXpGain').textContent = `+${xp} XP` + (won && SAVE.streak >= 2 ? ` · 🔥 racha de ${SAVE.streak}` : '');
       grantXp(xp, oldLv);
-      if (won) { confetti(0, -4, 160, 8); SFX.cheer(1); CHEER.t = 3; if (S.net !== 'client') for (const p of S.teams[me]) { p.anim = 'cheer'; p.animT = 0; } }
-      $('#bAgain').textContent = S.net === 'client' ? 'Esperando al anfitrión…' : '¡Revancha!';
+      if (cupMsg) $('#eUnlocks').innerHTML += cupMsg;
+      if (won) { confetti(0, -4, 160, 8); SFX.cheer(1); CHEER.t = 3; say('¡Se acabó el juego! ¡Victoria!', 2); if (S.net !== 'client') for (const p of S.teams[me]) { p.anim = 'cheer'; p.animT = 0; } }
+      else say('Se acabó el juego.', 1);
+      $('#bAgain').textContent = GAME.cupGame ? '🏆 Ver la Copa' : S.net === 'client' ? 'Esperando al anfitrión…' : '¡Revancha!';
       $('#bAgain').disabled = S.net === 'client';
     }
     $('#bEndMenu').textContent = S.online ? 'Salir de la sala' : 'Menú';
@@ -3463,7 +4076,17 @@ function showEndScreen() {
     showScreen('scrEnd');
   }, 1700);
 }
-$('#bAgain').onclick = () => { SFX.ui(); if (S.net === 'host') hostStart(); else startGame(GAME.mode === 'derby'); };
+$('#bAgain').onclick = () => {
+  SFX.ui();
+  if (GAME.cupGame) { leaveToMenu(); openCup(); return; }
+  if (S.net === 'host') hostStart(); else startGame(GAME.mode === 'derby');
+};
+$('#bCup').onclick = () => { SFX.resume(); SFX.ui(); openCup(); };
+$('#bCupPlay').onclick = () => { SFX.resume(); playCup(); };
+$('#bCupNew').onclick = () => { SFX.ui(); newCup(); renderCup(); };
+$('#bGoals').onclick = () => { SFX.resume(); SFX.ui(); openGoals(); };
+$$('#goalTabs .tab').forEach((b) => b.addEventListener('click', () => { goalTab = b.dataset.gt; SFX.ui(); renderGoals(); }));
+$('#bTut').onclick = () => { SFX.resume(); SFX.ui(); TUT.start(); };
 $('#bEndMenu').onclick = () => { SFX.ui(); leaveToMenu(); };
 $('#bToLobby').onclick = () => { SFX.ui(); netSendAll({ t: 'tolobby' }); backToLobby(); };
 
@@ -3533,10 +4156,14 @@ function syncPauseBtns() {
   $('#bHelpTog').textContent = '🎯 Ayuda al batear: ' + (SAVE.help ? 'Sí' : 'No');
   $('#bVib').textContent = '📳 Vibración: ' + (SAVE.vib !== false ? 'Sí' : 'No');
   $('#bVib').style.display = IS_TOUCH ? '' : 'none';
+  $('#bVoice').textContent = '🎙️ Narrador: ' + (SAVE.voice === false ? 'No' : VOICE.ok ? 'Sí' : 'no disponible en este navegador');
+  $('#bReplays').textContent = '🎬 Repeticiones: ' + (SAVE.replays === false ? 'No' : 'Sí');
   $('#bBatMode').textContent = '⚾ Bateo: ' + (cursorMode() ? 'Con cursor' : 'Simple');
   $('#bThrowMode').textContent = '🧤 Tiros en defensa: ' + (SAVE.throwMode === 'auto' ? 'Automáticos' : 'Manuales');
   syncQualityBtn();
 }
+$('#bVoice').onclick = () => { SAVE.voice = SAVE.voice === false; storeSave(); syncPauseBtns(); SFX.ui(); if (SAVE.voice) say('Narrador encendido.', 2); else if (VOICE.ok) speechSynthesis.cancel(); };
+$('#bReplays').onclick = () => { SAVE.replays = SAVE.replays === false; storeSave(); syncPauseBtns(); SFX.ui(); };
 $('#bBatMode').onclick = () => { SAVE.batMode = cursorMode() ? 'simple' : 'cursor'; storeSave(); syncPauseBtns(); HUD.ctx = '?'; SFX.ui(); };
 $('#bThrowMode').onclick = () => {
   SAVE.throwMode = SAVE.throwMode === 'auto' ? 'manual' : 'auto'; storeSave(); syncPauseBtns(); SFX.ui();
@@ -3612,8 +4239,9 @@ function netReset() {
   for (const cl of NET.relays) { try { cl.end(); } catch (e) { /* ignorar */ } }
   Object.assign(NET, { relays: [], welcomed: false, via: '', role: 'off', peer: null, hostConn: null, lobby: [], started: false, snaps: [], evQueue: [], tiOff: null, guest: null });
   NET.relayConns.clear(); NET.conns.clear();
-  Object.assign(CL, { pitch: null, swingSent: false, takeSent: false, batAnim: null, lastPid: 0 });
+  Object.assign(CL, { pitch: null, swingSent: false, takeSent: false, batAnim: null, lastPid: 0, mid: '' });
   CL.scoreT.clear();
+  Object.assign(NET, { reconnecting: false, lostSince: 0, guestCid: '', mid: '', goMid: '' });
   try { if (peer) peer.destroy(); } catch (e) { /* ignorar */ }
 }
 function sanitizeLook(l) {
@@ -3641,7 +4269,7 @@ function cleanCmd(c) {
   else if (t === 'run') o.dir = c.dir > 0 ? 1 : -1;
   else if (t === 'runTo' || t === 'steal') o.base = num(c.base, 1, 4) | 0;
   else if (t === 'tmode') o.v = c.v === 'auto' ? 'auto' : 'manual';
-  else if (!['take', 'jump', 'dive'].includes(t)) return null;
+  else if (!['take', 'jump', 'dive', 'relief'].includes(t)) return null;
   return o;
 }
 
@@ -3667,7 +4295,12 @@ function relayConnectOne(i) {
   return loadScript(LIB_MQTT).then(() => new Promise((res, rej) => {
     let done = false;
     const cl = window.mqtt.connect(RELAY_BROKERS[i], { clientId: 'jp_' + Math.random().toString(36).slice(2, 12), clean: true, connectTimeout: 7000, reconnectPeriod: 2500, keepalive: 30 });
-    cl.on('connect', () => { if (!done) { done = true; res(cl); } });
+    cl.on('connect', () => {
+      // con clean:true las suscripciones se pierden al reconectar: se repiten
+      for (const tp of cl.jpTopics || []) cl.subscribe(tp);
+      if (!done) { done = true; res(cl); }
+    });
+    cl.jpSub = (tp) => { cl.jpTopics = (cl.jpTopics || []).concat(tp); cl.subscribe(tp); };
     cl.on('error', () => { /* reintenta solo */ });
     setTimeout(() => { if (!done) { done = true; try { cl.end(true); } catch (e) { /* ignorar */ } rej(new Error('relay timeout')); } }, 8000);
   }));
@@ -3681,7 +4314,7 @@ function hostRelayStart(code) {
     relayConnectOne(i).then((cl) => {
       if (NET.role !== 'host' || NET.code !== code) { cl.end(true); return; }
       NET.relays.push(cl);
-      cl.subscribe(rTopic(code, 'h'));
+      cl.jpSub(rTopic(code, 'h'));
       cl.on('message', (tp, payload) => {
         let m;
         try { m = JSON.parse(payload.toString()); } catch (e) { return; }
@@ -3714,7 +4347,7 @@ async function clientRelayJoin(code) {
       send(msg) { if (this.open) cl.publish(rTopic(code, 'h'), JSON.stringify({ f: cid, d: msg })); },
       close() { try { this.send({ t: 'bye' }); } catch (e) { /* ignorar */ } this.open = false; setTimeout(() => { try { cl.end(true); } catch (e) { /* ignorar */ } }, 200); },
     };
-    cl.subscribe(rTopic(code, 'c/' + cid));
+    cl.jpSub(rTopic(code, 'c/' + cid));
     cl.on('message', (tp, payload) => {
       if (NET.hostConn !== conn) return;
       let m;
@@ -3736,19 +4369,39 @@ setInterval(() => {
   const now = performance.now();
   if (NET.role === 'host') {
     if (GAME.mode !== 'online') netSendAll({ t: 'ping', ts: now });
-    for (const [key, v] of NET.relayConns) if (now - v.lastT > 12000) { v.open = false; NET.relayConns.delete(key); hostDrop(v); }
-  } else if (NET.role === 'client' && NET.welcomed && NET.hostConn && now - NET.lastHostMsg > 12000) {
-    toast('Se perdió la conexión con el anfitrión');
-    leaveToMenu();
+    for (const [key, v] of NET.relayConns) if (now - v.lastT > 15000) { v.open = false; NET.relayConns.delete(key); hostDrop(v); }
+    for (const c of NET.conns.values()) if (!c.conn.relay && c.lastT && now - c.lastT > 20000) { try { c.conn.close(); } catch (e) { /* ignorar */ } hostDrop(c.conn); }
+  } else if (NET.role === 'client') {
+    if (NET.hostConn && NET.hostConn.open) netSend({ t: 'cping', ts: now }); // el anfitrión sabe que sigo aquí
+    if (NET.welcomed && now - NET.lastHostMsg > 6000) clientReconnect();
+    if (NET.lostSince && now - NET.lostSince > 40000) { toast('Se perdió la conexión con el anfitrión'); leaveToMenu(); }
   }
 }, 2000);
+// el invitado no recibe nada: vuelve a conectarse a la misma sala (primero por relevo, que pasa por cualquier red)
+function clientReconnect() {
+  if (NET.reconnecting || NET.role !== 'client') return;
+  NET.reconnecting = true;
+  NET.lostSince = NET.lostSince || performance.now();
+  toast('Reconectando con el anfitrión…', 2500);
+  const code = NET.code, old = NET.hostConn, peer = NET.peer;
+  NET.welcomed = false; NET.hostConn = null; NET.peer = null;
+  try { if (old) old.close(); } catch (e) { /* ignorar */ }
+  try { if (peer) peer.destroy(); } catch (e) { /* ignorar */ }
+  for (const cl of NET.relays) { try { cl.end(true); } catch (e) { /* ignorar */ } }
+  NET.relays = [];
+  clientRelayJoin(code).finally(() => {
+    NET.reconnecting = false;
+    if (NET.welcomed) { NET.lostSince = 0; toast('¡Conectado otra vez!', 1500); }
+    else NET.lastHostMsg = performance.now() - 4000; // reintenta pronto
+  });
+}
 
 // ---------- anfitrión ----------
 function hostCreate() {
   netReset();
   NET.role = 'host';
   NET.code = genCode();
-  NET.settings = { innings: SAVE.innings, diff: SAVE.diff, venue: SAVE.venue };
+  NET.settings = { innings: SAVE.innings, diff: SAVE.diff, venue: SAVE.venue, team: SAVE.team || 'verdes' };
   NET.lobby = [{ id: 'h', name: SAVE.name, look: SAVE.look, team: 0, tm: SAVE.throwMode || 'manual' }];
   showScreen('scrLobby');
   setLobbyStatus('Creando sala…');
@@ -3770,27 +4423,49 @@ function hostCreate() {
   });
   peer.on('disconnected', () => { try { if (NET.peer === peer) peer.reconnect(); } catch (e) { /* ignorar */ } });
 }
+// equipo del invitado: el que eligió, salvo que coincida con el del anfitrión
+function guestTeamId(want) {
+  const host = NET.settings.team || 'verdes';
+  if (want && TEAM_BY_ID[want] && want !== host) return want;
+  return host === 'rosas' ? 'verdes' : 'rosas';
+}
 function hostOnData(conn, d) {
   if (!d || typeof d !== 'object') return;
   const c = NET.conns.get(conn.peer);
+  if (c) c.lastT = performance.now();
   switch (d.t) {
     case 'hello': {
       if (c) return;
-      if (NET.guest) { try { conn.send({ t: 'full' }); } catch (e) { /* ignorar */ } setTimeout(() => { try { conn.close(); } catch (e) { /* ignorar */ } }, 400); return; }
-      const entry = { id: 'g', name: String(d.name || 'Amigo').slice(0, 12), look: sanitizeLook(d.look), team: 1, tm: d.tm === 'auto' ? 'auto' : 'manual' };
+      const cid = String(d.cid || '').slice(0, 24);
+      if (NET.guest) {
+        // ¿es el mismo amigo que vuelve (o su conexión anterior se murió)? se reemplaza; si no, la sala está llena
+        const old = NET.conns.get(NET.guest);
+        const stale = !old || !old.lastT || performance.now() - old.lastT > 8000;
+        if ((cid && cid === NET.guestCid) || stale) { if (old) { try { old.conn.close(); } catch (e) { /* ignorar */ } NET.conns.delete(NET.guest); } NET.guest = null; }
+        else { try { conn.send({ t: 'full' }); } catch (e) { /* ignorar */ } setTimeout(() => { try { conn.close(); } catch (e) { /* ignorar */ } }, 400); return; }
+      }
+      const entry = { id: 'g', name: String(d.name || 'Amigo').slice(0, 12), look: sanitizeLook(d.look), team: 1, tm: d.tm === 'auto' ? 'auto' : 'manual', teamId: guestTeamId(d.teamId) };
       NET.lobby = [NET.lobby[0], entry];
-      NET.conns.set(conn.peer, { conn, rtt: 0.1 });
-      NET.guest = conn.peer;
+      NET.conns.set(conn.peer, { conn, rtt: 0.1, lastT: performance.now() });
+      NET.guest = conn.peer; NET.guestCid = cid;
       conn.send({ t: 'welcome', code: NET.code });
       broadcastLobby();
       toast(entry.name + ' entró a la sala');
       SFX.ui();
-      // partido en marcha (p. ej. se le cortó la conexión): vuelve a jugar con los Rosas
+      // partido en marcha (p. ej. se le cortó la conexión): vuelve a jugar con su equipo
       if (S.net === 'host' && S.on && !S.ended && GAME.mode === 'online') {
         S.ctl[1] = true; S.remote[1] = true; S.throwMode[1] = entry.tm;
-        conn.send({ t: 'start', roster: S.players.map((p) => ({ n: p.name, l: p.look, c: p.captain ? 1 : 0 })), settings: S.settings, me: 1 });
-        toast(entry.name + ' vuelve a jugar con los Rosas');
+        NET.goMid = ''; NET.startT = 0;
+        conn.send(startMsg());
+        toast(entry.name + ' vuelve a jugar con los ' + TEAM_NAME[1]);
       }
+      break;
+    }
+    case 'go': if (c && d.mid === NET.mid) NET.goMid = d.mid; break;
+    case 'needstart': if (c && S.net === 'host' && S.on && !S.ended && S.remote[1]) { try { conn.send(startMsg()); } catch (e) { /* ignorar */ } } break;
+    case 'team': {
+      const e = NET.lobby[1];
+      if (c && e && !NET.started) { e.teamId = guestTeamId(d.teamId); broadcastLobby(); }
       break;
     }
     case 'in':
@@ -3819,44 +4494,59 @@ function hostDrop(conn) {
   broadcastLobby();
 }
 function broadcastLobby() {
-  netSendAll({ t: 'lobby', players: NET.lobby, settings: NET.settings, started: NET.started });
+  netSendAll({ t: 'lobby', players: NET.lobby, settings: NET.settings, started: NET.started, mid: NET.started ? NET.mid : '' });
   renderLobby();
+}
+// mensaje de inicio pequeño: los dos dispositivos arman las mismas plantillas a partir de los equipos
+function startMsg() {
+  return { t: 'start', mid: NET.mid, teams: S.teamIds, caps: [0, 1].map((t) => { const p = S.teams[t].concat(S.bullpen[t]).find((x) => x.captain) || null; return p ? { n: p.name, l: p.look } : null; }), settings: S.settings, me: 1 };
 }
 function hostStart() {
   const g = NET.lobby.find((p) => p.team === 1);
   const settings = { innings: NET.settings.innings, diff: NET.settings.diff, venue: NET.settings.venue, help: !!SAVE.help };
   NET.started = true;
-  NET.snapT = 0; NET.evQueue = [];
+  NET.snapT = 0; NET.evQueue = []; NET.mid = genCode() + genCode(); NET.goMid = ''; NET.startT = 0; NET.lnKey = '';
   startGame(false, {
     net: 'host', online: true, me: 0, ctl: [true, !!g], remote: [false, !!g],
+    teams: [NET.settings.team || SAVE.team || 'verdes', g ? g.teamId : guestTeamId(SAVE.rival)],
     captains: [{ name: SAVE.name, look: SAVE.look }, g ? { name: g.name, look: g.look } : null],
     throwMode: [SAVE.throwMode || 'manual', g ? g.tm : 'auto'], settings,
   });
-  const roster = S.players.map((p) => ({ n: p.name, l: p.look, c: p.captain ? 1 : 0 }));
-  netSendAll({ t: 'start', roster, settings, me: 1 });
+  netSendAll(startMsg());
   broadcastLobby();
 }
+// estado compacto (enteros) para que viaje bien incluso por redes lentas o el relevo
 function netSnapshot() {
-  const b = S.ball;
-  return {
-    t: 's', ti: performance.now() / 1000, ph: S.phase, pt: r2(S.t), h: S.half, inn: S.inning, o: S.outs, b: S.balls, k: S.strikes,
-    sc: S.score, hi: S.hits, ln: S.line, bat: S.batter ? S.batter.id : -1, ctrl: S.ctrlId,
-    cd: +!!S.contactDone, bd: +!!S.batted, wk: +!!S.walk, hr: +!!S.hr, sp: +!!S.stealPlay, q: S.queued && S.queued.team === 1 ? S.queued.base : 0,
-    p: S.players.map((p) => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.ry), ANIM_IDX[p.anim] ?? 0, r2(p.animT)]),
-    bl: [r2(b.x), r2(b.y), r2(b.z), r2(b.vx), r2(b.vy), r2(b.vz), Math.max(0, BST.indexOf(b.st)), b.holder ? b.holder.id : -1, (b.bounced ? 1 : 0) | (b.outOfPark ? 2 : 0) | (b.batted ? 4 : 0)],
-    ru: S.runners.map((r) => [r.pl.id, r2(r.p), r2(r.target), (r.out ? 1 : 0) | (r.scored ? 2 : 0) | (r.isBatter ? 4 : 0) | (r.steal ? 8 : 0) | (r.stealing ? 16 : 0), r2(r.slideT)]),
+  const b = S.ball, q = (v, k) => Math.round((+v || 0) * k);
+  const pp = [];
+  for (const p of S.players) pp.push(q(p.x, 20), q(p.y, 50), q(p.z, 20), q(p.ry, 50), ANIM_IDX[p.anim] ?? 0, q(Math.min(p.animT, 60), 20));
+  const s = {
+    t: 's', mid: NET.mid, ti: Math.round(performance.now()) / 1000, ph: S.phase, pt: q(S.t, 20) / 20, h: S.half, inn: S.inning, o: S.outs, b: S.balls, k: S.strikes,
+    sc: S.score, hi: S.hits, bat: S.batter ? S.batter.id : -1, ctrl: S.ctrlId,
+    f: (S.contactDone ? 1 : 0) | (S.batted ? 2 : 0) | (S.walk ? 4 : 0) | (S.hr ? 8 : 0) | (S.stealPlay ? 16 : 0), q: S.queued && S.queued.team === 1 ? S.queued.base : 0,
+    pp, tm: S.teams.map((T) => T.map((p) => p.id)), sta: S.teams.map((T) => Math.round((T.find((p) => p.role === 'P') || {}).stam ?? 100)), bp: [S.bullpen[0].length, S.bullpen[1].length],
+    bl: [q(b.x, 50), q(b.y, 50), q(b.z, 50), q(b.vx, 10), q(b.vy, 10), q(b.vz, 10), Math.max(0, BST.indexOf(b.st)), b.holder ? b.holder.id : -1, (b.bounced ? 1 : 0) | (b.outOfPark ? 2 : 0) | (b.batted ? 4 : 0)],
+    ru: S.runners.map((r) => [r.pl.id, q(r.p, 100), q(r.target, 100), (r.out ? 1 : 0) | (r.scored ? 2 : 0) | (r.isBatter ? 4 : 0) | (r.steal ? 8 : 0) | (r.stealing ? 16 : 0), q(r.slideT, 20)]),
   };
+  const lk = JSON.stringify(S.line);
+  if (lk !== NET.lnKey || Math.random() < 0.05) { NET.lnKey = lk; s.ln = S.line; }
+  return s;
 }
+// ¿la conexión directa está atascada? (mejor saltarse un estado que acumular retraso)
+function connBusy(c) { const dc = c.conn && c.conn.dataChannel; return !!(dc && dc.bufferedAmount > 48000); }
 function hostTick(dt, evs) {
   for (const e of evs) NET.evQueue.push(e);
   NET.snapT += dt; NET.pingT += dt;
-  if (NET.snapT >= 1 / 20) {
+  const relay = [...NET.conns.values()].some((c) => c.conn.relay);
+  if (NET.snapT >= (relay ? 1 / 12 : 1 / 20)) {
     NET.snapT = 0;
     const s = netSnapshot();
-    s.ev = NET.evQueue.splice(0);
-    netSendAll(s);
+    s.ev = NET.evQueue.splice(0, 40);
+    for (const c of NET.conns.values()) if (c.conn.open && !connBusy(c)) { try { c.conn.send(s); } catch (e) { /* ignorar */ } }
   }
   if (NET.pingT >= 1) { NET.pingT = 0; netSendAll({ t: 'ping', ts: performance.now() }); }
+  // el inicio se repite hasta que el invitado confirma que lo recibió
+  if (NET.guest && S.remote[1] && NET.goMid !== NET.mid) { NET.startT -= dt; if (NET.startT <= 0) { NET.startT = 1.2; netSendAll(startMsg()); } }
 }
 // el lanzamiento sale ya: el invitado lo dibuja con su propio reloj para poder batear a tiempo
 function netPitchRelease(p) {
@@ -3869,7 +4559,11 @@ function netSendEnd() {
 }
 
 // ---------- invitado ----------
-const helloMsg = () => ({ t: 'hello', name: SAVE.name, look: SAVE.look, tm: SAVE.throwMode || 'manual' });
+// identificador fijo de este dispositivo: si se corta y vuelve, el anfitrión lo reconoce
+const CID = (() => { try { let v = localStorage.getItem('jp_cid'); if (!v) { v = Math.random().toString(36).slice(2, 14); localStorage.setItem('jp_cid', v); } return v; } catch (e) { return Math.random().toString(36).slice(2, 14); } })();
+const helloMsg = () => ({ t: 'hello', name: SAVE.name, look: SAVE.look, tm: SAVE.throwMode || 'manual', cid: CID, teamId: SAVE.team || 'rosas' });
+let askT = 0;
+function askStart() { const now = performance.now(); if (now - askT < 1500) return; askT = now; netSend({ t: 'needstart' }); }
 function clientJoin(code) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length < 4) { setJoinStatus('Escribe el código de la sala'); return; }
@@ -3895,7 +4589,7 @@ function clientJoin(code) {
     NET.hostConn = conn; NET.via = 'directa';
     conn.on('open', () => { clearTimeout(to); conn.send(helloMsg()); setJoinStatus('¡Conectado!'); });
     conn.on('data', clientOnData);
-    conn.on('close', () => { if (NET.peer === peer && NET.hostConn === conn) { toast('Se cerró la conexión con el anfitrión'); leaveToMenu(); } });
+    conn.on('close', () => { if (NET.peer === peer && NET.hostConn === conn) { if (NET.welcomed) clientReconnect(); else fallback(); } });
     conn.on('error', fallback);
     setTimeout(() => {
       const pc = conn.peerConnection;
@@ -3908,19 +4602,34 @@ function clientOnData(d) {
   if (!d || typeof d !== 'object') return;
   NET.lastHostMsg = performance.now();
   switch (d.t) {
-    case 'welcome': NET.code = d.code; NET.welcomed = true; showScreen('scrLobby'); renderLobby(); break;
+    case 'welcome':
+      NET.code = d.code; NET.welcomed = true;
+      if (!(S.net === 'client' && S.on && !S.ended && GAME.mode === 'online')) showScreen('scrLobby'); // si estaba jugando, sigue en el partido
+      renderLobby();
+      break;
     case 'hostbye': if (NET.role === 'client') { toast('El anfitrión cerró la sala'); leaveToMenu(); } break;
     case 'full': setJoinStatus('La sala ya tiene dos jugadores'); break;
     case 'lobby':
       NET.lobby = d.players || []; NET.settings = d.settings || NET.settings; NET.started = d.started;
       if (GAME.mode === 'menu' && NET.settings.venue) setVenue(NET.settings.venue);
       renderLobby();
+      // hay partido y yo no estoy dentro: pido que me lo manden
+      if (d.started && d.mid && !(S.net === 'client' && CL.mid === d.mid)) askStart();
       break;
-    case 'start':
-      if (!Array.isArray(d.roster) || d.roster.length !== 18) return;
-      startGame(false, { net: 'client', online: true, me: 1, ctl: [true, true], remote: [false, false], roster: d.roster, settings: Object.assign({}, d.settings, { help: !!SAVE.help }) });
+    case 'start': {
+      if (!Array.isArray(d.teams) || d.teams.length !== 2) return;
+      if (!(S.net === 'client' && CL.mid === d.mid && S.on && !S.ended)) {
+        const caps = (d.caps || []).map((c) => (c && typeof c === 'object' ? { name: String(c.n || 'Amigo').slice(0, 12), look: sanitizeLook(c.l) } : null));
+        startGame(false, { net: 'client', online: true, me: 1, ctl: [true, true], remote: [false, false], teams: d.teams.map((t) => (TEAM_BY_ID[t] ? t : 'verdes')), captains: [caps[0] || null, caps[1] || null], settings: Object.assign({}, d.settings, { help: !!SAVE.help }) });
+        CL.mid = d.mid;
+      }
+      netSend({ t: 'go', mid: d.mid });
       break;
-    case 's': if (S.net === 'client') clientSnap(d); break;
+    }
+    case 's':
+      if (S.net === 'client' && d.mid === CL.mid) clientSnap(d);
+      else askStart(); // me llega el partido pero no lo tengo: se me perdió el inicio
+      break;
     case 'rel': if (S.net === 'client') clientRelease(d); break;
     case 'end': if (S.net === 'client') clientEnd(d); break;
     case 'ping': netSend({ t: 'pong', ts: d.ts }); break;
@@ -3983,23 +4692,33 @@ function clientTick(dt, inp) {
   const el = Math.max(0, rt - s0.ti);
   // estado del partido
   Object.assign(S, {
-    phase: s0.ph, t: s0.pt + el, half: s0.h, inning: s0.inn, outs: s0.o, balls: s0.b, strikes: s0.k, score: s0.sc, hits: s0.hi, line: s0.ln || S.line,
-    batter: s0.bat >= 0 ? S.players[s0.bat] : null, ctrlId: s0.ctrl, contactDone: !!s0.cd, batted: !!s0.bd, walk: !!s0.wk, hr: !!s0.hr, stealPlay: !!s0.sp,
+    phase: s0.ph, t: s0.pt + el, half: s0.h, inning: s0.inn, outs: s0.o, balls: s0.b, strikes: s0.k, score: s0.sc, hits: s0.hi,
+    batter: s0.bat >= 0 ? S.players[s0.bat] : null, ctrlId: s0.ctrl, contactDone: !!(s0.f & 1), batted: !!(s0.f & 2), walk: !!(s0.f & 4), hr: !!(s0.f & 8), stealPlay: !!(s0.f & 16),
     queued: s0.q ? { base: s0.q, team: 1 } : null,
   });
-  // jugadores (interpolados)
-  for (let i = 0; i < s0.p.length; i++) {
-    const a = s0.p[i], b1 = s1 ? s1.p[i] : null, p = S.players[a[0]];
-    if (!p) continue;
-    const L = (j) => (b1 ? lerp(a[j], b1[j], k) : a[j]);
+  for (let i = NET.snaps.length - 1; i >= 0; i--) if (NET.snaps[i].ln) { S.line = NET.snaps[i].ln; break; }
+  // plantillas (relevos) y energía de los lanzadores
+  if (Array.isArray(s0.tm)) for (let t = 0; t < 2; t++) {
+    const ids = s0.tm[t];
+    if (!Array.isArray(ids) || ids.length !== 9) continue;
+    S.teams[t] = ids.map((id, i) => { const p = S.players[id]; p.role = ROLES[i]; p.order = i; p.bench = false; return p; });
+    for (const p of S.players) if (p.team === t && !ids.includes(p.id)) { p.bench = true; if (p.role !== 'RP') p.role = 'RP'; }
+    const P = S.teams[t].find((p) => p.role === 'P'); if (P && s0.sta) P.stam = s0.sta[t];
+  }
+  if (Array.isArray(s0.bp)) S.bullpenLeft = s0.bp;
+  // jugadores (interpolados; posiciones en enteros: x,z ·20 · y,ry ·50 · animT ·20)
+  const A0 = s0.pp, A1 = s1 ? s1.pp : null;
+  for (let i = 0; i < S.players.length && A0 && i * 6 + 5 < A0.length; i++) {
+    const p = S.players[i], o = i * 6;
+    const L = (j, sc) => (A1 ? lerp(A0[o + j], A1[o + j], k) : A0[o + j]) / sc;
     const ox = p.x, oz = p.z;
-    p.x = L(1); p.y = L(2); p.z = L(3);
+    p.x = L(0, 20); p.y = L(1, 50); p.z = L(2, 20);
     if (Math.hypot(p.x - ox, p.z - oz) > 3) p.snap = true;
-    let da = (b1 ? b1[4] : a[4]) - a[4];
+    let da = ((A1 ? A1[o + 3] : A0[o + 3]) - A0[o + 3]) / 50;
     while (da > Math.PI) da -= Math.PI * 2;
     while (da < -Math.PI) da += Math.PI * 2;
-    p.ry = a[4] + da * k;
-    p.anim = ANIMS[a[5]] || 'idle'; p.animT = a[6] + el;
+    p.ry = A0[o + 3] / 50 + da * k;
+    p.anim = ANIMS[A0[o + 4]] || 'idle'; p.animT = A0[o + 5] / 20 + el;
   }
   // mi swing se ve al instante (el anfitrión lo confirma después)
   if (CL.batAnim && S.batter && now - CL.batAnim.t0 < 0.95) { S.batter.anim = CL.batAnim.anim; S.batter.animT = now - CL.batAnim.t0; }
@@ -4009,11 +4728,12 @@ function clientTick(dt, inp) {
     const scored = !!(a[3] & 2);
     if (scored && !CL.scoreT.has(a[0])) CL.scoreT.set(a[0], now);
     if (!scored) CL.scoreT.delete(a[0]);
-    return { pl: S.players[a[0]], p: b1 ? lerp(a[1], b1[1], k) : a[1], target: a[2], out: !!(a[3] & 1), scored, isBatter: !!(a[3] & 4), steal: !!(a[3] & 8), stealing: !!(a[3] & 16), slideT: a[4], scoreT: CL.scoreT.get(a[0]) || now, base: Math.floor(a[1]) };
+    const pv = (b1 ? lerp(a[1], b1[1], k) : a[1]) / 100;
+    return { pl: S.players[a[0]], p: pv, target: a[2] / 100, out: !!(a[3] & 1), scored, isBatter: !!(a[3] & 4), steal: !!(a[3] & 8), stealing: !!(a[3] & 16), slideT: a[4] / 20, scoreT: CL.scoreT.get(a[0]) || now, base: Math.floor(pv) };
   });
   for (const r of S.runners) { if (r.out || r.scored || !r.pl) continue; const P = runnerPos(r); r.pl.x = P.x; r.pl.z = P.z; if (r.slideT > 0) r.pl.anim = 'slide'; }
-  // pelota
-  const B = S.ball, bl = s0.bl, st = BST[bl[6]] || 'held';
+  // pelota (x,y,z ·50 · velocidades ·10)
+  const B = S.ball, bl = s0.bl.map((v, i) => (i < 3 ? v / 50 : i < 6 ? v / 10 : v)), st = BST[bl[6]] || 'held';
   B.holder = bl[7] >= 0 ? S.players[bl[7]] : null;
   B.bounced = !!(bl[8] & 1); B.outOfPark = !!(bl[8] & 2); B.batted = !!(bl[8] & 4);
   const P = CL.pitch, pt = P ? now - P.t0 : 99;
@@ -4022,7 +4742,7 @@ function clientTick(dt, inp) {
     else { B.st = 'pitch'; B.holder = null; pitchAt(P, pt, B); B.vx = P.v0.x + P.a.x * pt; B.vy = P.v0.y + P.a.y * pt; B.vz = P.v0.z; }
   } else {
     B.st = st;
-    const b1 = s1 ? s1.bl : null;
+    const b1 = s1 ? s1.bl.map((v, i) => (i < 3 ? v / 50 : i < 6 ? v / 10 : v)) : null;
     if (b1 && BST[b1[6]] === st && st !== 'held') { B.x = lerp(bl[0], b1[0], k); B.y = lerp(bl[1], b1[1], k); B.z = lerp(bl[2], b1[2], k); }
     else { const t = Math.min(el, 0.2); B.x = bl[0] + bl[3] * t; B.z = bl[2] + bl[5] * t; B.y = st === 'air' ? Math.max(BALL_R, bl[1] + bl[4] * t - 0.5 * G * t * t) : bl[1]; }
     B.vx = bl[3]; B.vy = bl[4]; B.vz = bl[5];
@@ -4051,11 +4771,21 @@ function renderLobby() {
   }
   const host = NET.role === 'host';
   $('#qrRow').style.display = NET.code && host ? '' : 'none';
+  const tIds = [NET.settings.team || 'verdes', (NET.lobby[1] && NET.lobby[1].teamId) || guestTeamId(SAVE.rival)];
   for (const t of [0, 1]) {
-    const p = NET.lobby.find((x) => x.team === t);
+    const p = NET.lobby.find((x) => x.team === t), T = teamOf(tIds[t]);
     const me = (host && t === 0) || (!host && t === 1);
+    $('#lTeamH' + t).innerHTML = `${T.badge} ${T.name} · ${t === 0 ? 'anfitrión' : 'invitado'}`;
+    $('#lTeamH' + t).parentElement.style.background = T.col + '22';
     $('#lTeam' + t).innerHTML = p ? `<div class="pl">${escapeHtml(p.name)}${me ? ' <em>(tú)</em>' : ''}${t === 0 ? ' <em>👑</em>' : ''}</div>` : '<div class="pl"><em>🤖 PC (esperando a tu amigo…)</em></div>';
   }
+  // cada uno elige su equipo
+  const mine = host ? tIds[0] : tIds[1], other = host ? tIds[1] : tIds[0];
+  renderTeamPicker($('#lMyTeam'), mine, other, (id) => {
+    SAVE.team = id; storeSave(); SFX.ui();
+    if (host) { NET.settings.team = id; if (NET.lobby[1]) NET.lobby[1].teamId = guestTeamId(NET.lobby[1].teamId); broadcastLobby(); }
+    else { netSend({ t: 'team', teamId: id }); }
+  });
   $('#lHostOpts').style.display = host ? '' : 'none';
   $('#bStart').style.display = host ? '' : 'none';
   $('#bStart').textContent = NET.lobby.length > 1 ? '¡Empezar partido!' : 'Empezar contra la PC';
@@ -4063,7 +4793,16 @@ function renderLobby() {
     const k = row.dataset.lopt;
     row.querySelectorAll('.chip').forEach((c) => c.classList.toggle('sel', c.dataset.v === String(NET.settings[k])));
   });
-  if (!host) setLobbyStatus(NET.started ? 'Hay un partido en curso: entrarás en el siguiente.' : 'Esperando a que el anfitrión empiece… (tú juegas con los Rosas)');
+  if (!host) setLobbyStatus(NET.started ? 'Entrando al partido…' : `Esperando a que el anfitrión empiece… (tú juegas con los ${teamOf(tIds[1]).name}) · ${NET.via === 'relevo' ? 'conectado por relevo' : 'conexión directa'}`);
+}
+// tarjetas de equipos: escudo, nombre, estilo y media
+function renderTeamPicker(box, sel, block, onPick) {
+  if (!box) return;
+  const key = sel + '|' + block;
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = TEAMS.map((T) => `<button class="tcard${T.id === sel ? ' sel' : ''}${T.id === block ? ' lock' : ''}" data-id="${T.id}" style="--tc:${T.col}"><span class="tb2">${T.badge}</span><b>${T.name}</b><small>${T.style}</small><i>${teamOvr(T)}</i></button>`).join('');
+  box.querySelectorAll('.tcard').forEach((b) => b.addEventListener('click', () => { if (b.dataset.id === block) { toast('Ese equipo ya lo tiene el rival'); return; } box.dataset.key = ''; onPick(b.dataset.id); }));
 }
 $('#bHost').onclick = () => { SFX.resume(); SFX.ui(); hostCreate(); };
 $('#bJoin').onclick = () => { SFX.resume(); clientJoin($('#jCode').value); };
@@ -4172,15 +4911,27 @@ try {
 } catch (e) { /* sin worker: solo funciona con la pestaña visible */ }
 function frame(now) {
   requestAnimationFrame(frame);
+  frameBody(now);
+}
+function frameBody(now) {
   lastRaf = performance.now();
   const rawDt = (now - last) / 1000;
   const dt = Math.min(0.05, Math.max(0, rawDt));
   last = now;
   autoQuality(rawDt);
+  crowdTick(dt);
+  if (RP.on) {
+    // repetición: la simulación espera; solo se dibuja la jugada grabada
+    rpTick(dt);
+    updateParts(dt); updateConfetti(dt); updateShock(dt); updateVenue(dt, now / 1000);
+    renderer.render(scene, camera);
+    return;
+  }
   if (S.on) {
     const ctx = uiCtx();
     updateAim(dt, ctx);
     meterTick(dt, ctx);
+    if (GAME.mode === 'tut') TUT.update(dt);
     const mv = moveInput();
     const inp = { mx: ctx === 'field' ? mv.x : 0, mz: ctx === 'field' ? -mv.y : 0 };
     if (S.net === 'client') {
@@ -4193,6 +4944,8 @@ function frame(now) {
       if (S.me >= 0) S.inp[S.me] = inp;
       const sdt = simAdvance(dt);
       renderGame(sdt);
+      rpRecord();
+      rpMaybeStart();
       if (GAME.mode !== 'menu') updateHud(ctx);
     }
   }
@@ -4218,4 +4971,4 @@ showScreen('scrMenu');
   if (sala) { showScreen('scrJoin'); $('#jCode').value = sala.toUpperCase(); setTimeout(() => clientJoin(sala), 300); }
 }
 requestAnimationFrame(frame);
-window.__JP = { S, GAME, INPUT, NET, CL, act, baseTap, pushCmd, startGame, ff(sec) { for (let i = 0; i < sec * 60; i++) { simStep(STEP); for (const e of S.events.splice(0)) handleEvent(e); } } };
+window.__JP = { S, GAME, INPUT, NET, CL, RP, TUT, SAVE, act, baseTap, pushCmd, startGame, tick(n) { for (let i = 0; i < n; i++) frameBody(last + 1000 / 60); }, ff(sec) { for (let i = 0; i < sec * 60; i++) { simStep(STEP); for (const e of S.events.splice(0)) handleEvent(e); } } };

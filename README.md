@@ -7,10 +7,20 @@ Usa el mismo estilo que [Remate Park](https://github.com/AlejandroEspinoPerez/Vo
 
 ## Modos
 
-- **Partido contra la PC**: 1, 2, 3 o 5 entradas, tres dificultades y cuatro estadios (Parque, Playa, Ciudad al atardecer y Estadio de noche).
-- **En línea (1 contra 1)**: 🌐 Crear sala y compartir el código, el link o el QR; tu amigo entra con 🔗 Unirme. El anfitrión juega con los Verdes y el invitado con los Rosas. Si nadie entra, o alguien se desconecta, juega la PC; si vuelve a entrar, recupera su equipo.
+- **Partido contra la PC**: eliges tu equipo y el rival entre 9 equipos (cada uno con su estilo y sus atributos), 1, 2, 3 o 5 entradas, tres dificultades y cuatro estadios (Parque, Playa, Ciudad al atardecer y Estadio de noche).
+- **🏆 Copa**: ocho equipos, eliminación directa (cuartos, semifinal y final). Los demás cruces se simulan según la media de cada equipo.
+- **En línea (1 contra 1)**: 🌐 Crear sala y compartir el código, el link o el QR; tu amigo entra con 🔗 Unirme y cada uno elige su equipo en la sala. Si nadie entra, o alguien se desconecta, juega la PC; si vuelve a entrar (aunque sea por el relevo), recupera su equipo en el mismo partido.
 - **Derby de jonrones**: batea hasta fallar 10 veces y bate tu récord.
+- **📘 Tutorial**: cinco lecciones que se completan jugando (batear, modo poder, lanzar con el aro, tirar a una base y robar).
+- **🎯 Retos y logros**: 3 retos diarios con XP y 16 logros.
 - **Personalizar jugador**: piel, peinado, accesorios, color del bate y del guante, y celebración. Se desbloquean más opciones al subir de nivel.
+
+## Más cosas
+
+- **Equipos con atributos**: poder, contacto, velocidad, defensa y brazo para los bateadores; velocidad, control y resistencia para los lanzadores. Tu jugador es el capitán del equipo.
+- **Cansancio y relevos**: el lanzador se cansa con cada lanzamiento (más lento y menos preciso). Cada equipo tiene dos relevistas; pides el cambio con el botón 🔄 Relevo o la tecla R.
+- **Repeticiones** a cámara lenta de jonrones, triples, dobles plays, outs en home y atrapadas en plancha (toca para saltarlas).
+- **Ambiente de estadio**: público que reacciona a cada jugada, aplausos, abucheos y un narrador con la voz del navegador (se pueden quitar en la pausa).
 
 ## Cómo se juega
 
@@ -31,6 +41,7 @@ Usa el mismo estilo que [Remate Park](https://github.com/AlejandroEspinoPerez/Vo
 | Saltar · lanzarse en plancha | Espacio · Clic der | SALTO · PLANCHA |
 | Corredores | Clic / Espacio = todos corren · E = todos vuelven · 1-4 = uno | CORRER / VOLVER · rombo |
 | Robar base | 2 3 4 o rombo antes del lanzamiento | Rombo antes del lanzamiento |
+| Cambiar de lanzador | R o botón 🔄 Relevo | Botón 🔄 Relevo |
 | Pausa · pantalla completa · sonido | Esc · F · M | Botones ⛶ y II |
 
 ## Archivos
@@ -44,4 +55,4 @@ Para probarlo en local hace falta un servidor (los módulos ES no cargan con `fi
 npx http-server .
 ```
 
-Con `?touch=1` en la URL se fuerza la interfaz táctil para probarla en el PC.
+Con `?touch=1` en la URL se fuerza la interfaz táctil para probarla en el PC y con `?relevo=1` el modo en línea usa solo el relevo MQTT.
